@@ -182,7 +182,7 @@ const DS_UNITS = [
   { id:'ep1',      name:'Episode 1 Vocab',icon:'📺', desc:'Vocabulary from Episode 1' },
   { id:'ep2',      name:'Episode 2 Vocab',icon:'📺', desc:'Vocabulary from Episode 2' },
   { id:'ep3',      name:'Episode 3 Vocab',icon:'📺', desc:'Vocabulary from Episode 3' },
-  { id:'custom',   name:'Custom Set',    icon:'⭐', desc:'Items you've added manually' },
+  { id:'custom',   name:'Custom Set',    icon:'⭐', desc:'Items you\'ve added manually' },
 ];
 
 // (FRQ array removed — replaced by Kanji Trace and Anime features)
