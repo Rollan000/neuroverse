@@ -1,4 +1,140 @@
+// ============================================================
+// R2 CONFIG & FETCH HELPER
+// ============================================================
+// Set this to your Cloudflare R2 public bucket URL after setup.
+// e.g. 'https://pub-XXXX.r2.dev' or your custom domain.
+const R2_BASE = 'https://neuroverse.uk';
 
+/**
+ * Fetch a JSON file from R2, with sessionStorage caching.
+ * Returns parsed JSON or null on failure.
+ * @param {string} path - e.g. 'data/kanji_db.json'
+ */
+async function r2Fetch(path) {
+  const cacheKey = `r2_cache__${path}`;
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) return JSON.parse(cached);
+    const res = await fetch(`${R2_BASE}/${path}`);
+    if (!res.ok) throw new Error(`R2 fetch failed: ${path} (${res.status})`);
+    const data = await res.json();
+    try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch (_) {}
+    return data;
+  } catch (e) {
+    console.error('[R2]', e);
+    return null;
+  }
+}
+
+// ============================================================
+// APP DATA — Runtime containers (populated by initAppData)
+// ============================================================
+// These replace the hardcoded constants below.
+// Code elsewhere should use these variables, not the hardcoded ones.
+let APP_HIRAGANA    = null;   // replaces HIRAGANA
+let APP_KATAKANA    = null;   // replaces KATAKANA
+let APP_KANA_COMBOS = null;   // new: combo kana
+let APP_KANJI_DB    = null;   // replaces KANJI_DB
+let APP_FLASHCARDS  = null;   // replaces FLASHCARDS
+let APP_MCQ         = null;   // replaces MCQ
+let APP_FILL_BANK   = null;   // replaces FILL_BANK
+let APP_SEQ_BANK    = null;   // replaces SEQ_BANK
+let APP_SHOP_ITEMS  = null;   // replaces hardcoded shop items
+
+// ============================================================
+// LOADING STATE HELPERS
+// ============================================================
+function showDataLoader() {
+  let el = document.getElementById('r2LoadingOverlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'r2LoadingOverlay';
+    el.style.cssText = [
+      'position:fixed','top:0','left:0','width:100%','height:100%',
+      'background:rgba(10,10,20,0.82)','z-index:9999',
+      'display:flex','flex-direction:column',
+      'align-items:center','justify-content:center',
+      'font-family:inherit','color:#c9b8ff',
+    ].join(';');
+    el.innerHTML = `
+      <div style="font-size:2rem;margin-bottom:1rem;">🌸</div>
+      <div style="font-size:1.1rem;letter-spacing:.08em;">Loading study data…</div>
+      <div id="r2LoadProgress" style="margin-top:.6rem;font-size:.85rem;opacity:.6;"></div>
+    `;
+    document.body.appendChild(el);
+  }
+  el.style.display = 'flex';
+}
+
+function setLoadProgress(msg) {
+  const el = document.getElementById('r2LoadProgress');
+  if (el) el.textContent = msg;
+}
+
+function hideDataLoader() {
+  const el = document.getElementById('r2LoadingOverlay');
+  if (el) {
+    el.style.transition = 'opacity .4s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 450);
+  }
+}
+
+// ============================================================
+// INIT APP DATA — Fetch all R2 assets on startup
+// ============================================================
+async function initAppData() {
+  showDataLoader();
+
+  const files = [
+    { key: 'hiragana',    path: 'data/hiragana.json',     label: 'Hiragana…' },
+    { key: 'katakana',    path: 'data/katakana.json',     label: 'Katakana…' },
+    { key: 'kanaCombos',  path: 'data/kana_combos.json',  label: 'Kana combos…' },
+    { key: 'kanjiDb',     path: 'data/kanji_db.json',     label: 'Kanji database…' },
+    { key: 'flashcards',  path: 'data/flashcards_n5.json',label: 'Flashcards…' },
+    { key: 'mcq',         path: 'data/mcq_n5.json',       label: 'MCQ questions…' },
+    { key: 'fillBank',    path: 'data/fill_bank.json',    label: 'Fill-in-blank…' },
+    { key: 'seqBank',     path: 'data/seq_bank.json',     label: 'Sequence questions…' },
+    { key: 'shopItems',   path: 'data/shop_items.json',   label: 'Shop items…' },
+  ];
+
+  const results = {};
+  for (const f of files) {
+    setLoadProgress(f.label);
+    results[f.key] = await r2Fetch(f.path);
+  }
+
+  // Assign to runtime containers — fall back to hardcoded if R2 unavailable
+  APP_HIRAGANA    = results.hiragana    || HIRAGANA;
+  APP_KATAKANA    = results.katakana    || KATAKANA;
+  APP_KANA_COMBOS = results.kanaCombos  || [];
+  APP_KANJI_DB    = results.kanjiDb     || KANJI_DB;
+  APP_FLASHCARDS  = results.flashcards  || FLASHCARDS;
+  APP_MCQ         = results.mcq         || MCQ;
+  APP_FILL_BANK   = results.fillBank    || FILL_BANK;
+  APP_SEQ_BANK    = results.seqBank     || SEQ_BANK;
+  APP_SHOP_ITEMS  = results.shopItems   || [];
+
+  hideDataLoader();
+  console.log('[R2] Data loaded:', {
+    hiragana: APP_HIRAGANA.length,
+    katakana: APP_KATAKANA.length,
+    kanaCombos: APP_KANA_COMBOS.length,
+    kanjiDb: APP_KANJI_DB.length,
+    flashcards: APP_FLASHCARDS.length,
+    mcq: APP_MCQ.length,
+    fillBank: APP_FILL_BANK.length,
+    seqBank: APP_SEQ_BANK.length,
+    shopItems: APP_SHOP_ITEMS.length,
+  });
+}
+
+// ============================================================
+// KICK OFF DATA LOAD
+// Run as early as possible — before DOMContentLoaded fires,
+// so data is ready when tabs first render.
+// ============================================================
+initAppData();
 // Mascot elements - declared at script scope, assigned after DOM ready
 let mascotImg = null;
 let mascotBubble = null;
