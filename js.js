@@ -1,5 +1,5 @@
 // ============================================================
-// R2 CONFIG & FETCH HELPER 
+// R2 CONFIG & FETCH HELPER
 // ============================================================
 // Set this to your Cloudflare R2 public bucket URL after setup.
 // e.g. 'https://pub-XXXX.r2.dev' or your custom domain.
