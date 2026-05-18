@@ -5961,30 +5961,54 @@ async function authSubmit() {
     btn.textContent = authMode === 'signup' ? 'Sign Up' : 'Log In';
   }
 }
-
+async function checkWhitelist(email) {
+  try {
+    const data = await r2Fetch('data/invite_codes.json');
+    if (!data || !Array.isArray(data.allowed)) {
+      // If the file is missing or malformed, fail CLOSED (block everyone).
+      console.warn('[Auth] Whitelist unavailable — access denied.');
+      return false;
+    }
+    return data.allowed.map(e => e.toLowerCase().trim()).includes(email.toLowerCase().trim());
+  } catch (e) {
+    console.error('[Auth] Whitelist check error:', e);
+    return false; // fail closed
+  }
+}
 async function handleSignedIn(user, username, isNewUser) {
+  // ── Whitelist gate ─────────────────────────────────────────
+  const allowed = await checkWhitelist(user.email);
+  if (!allowed) {
+    // Sign them back out immediately and show a block screen.
+    if (sbClient) await sbClient.auth.signOut();
+    showAuthError('Access restricted. Contact the administrator to request access.');
+    return;
+  }
+  // ──────────────────────────────────────────────────────────
+ 
   currentUser = { id: user.id, email: user.email, username };
   updateAuthStatusBtn();
-
-  const guestProgress = collectLocalProgress(); // grab before overwrite
-
+ 
+  const localProgress = collectLocalProgress();
+ 
   if (!isNewUser) {
-    // Existing user: load server data and merge with guest progress
+    // Existing user: load server data and merge with local progress
     const profile = await loadFromCloud(user.id);
     if (profile?.progress) {
-      const merged = applyProgress(profile.progress, guestProgress);
+      const merged = applyProgress(profile.progress, localProgress);
       applyToLocalStorage(merged);
     }
   }
-
+ 
   // Save (merged) state to cloud
   await saveToCloud();
   patchCloudSave();
-
+ 
   // Close modal
   document.getElementById('authOverlay').classList.add('hidden');
   rewardPopup(`✓ Signed in as ${username}`);
 }
+
 
 async function handleLogout() {
   if (sbClient) {
