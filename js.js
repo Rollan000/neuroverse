@@ -127,10 +127,11 @@ async function initAppData() {
     seqBank: APP_SEQ_BANK.length,
     shopItems: APP_SHOP_ITEMS.length,
   });
-  // Re-init study modes now that data is ready
+// Re-init study modes now that data is ready
   try { initFlash(); } catch(e) {}
   try { initMCQ(); }   catch(e) {}
   try { initCyc(); }   catch(e) {}
+  try { updateReviewBadge(); } catch(e) {}
 }
 
 // ============================================================
@@ -309,7 +310,47 @@ const EPISODES = [
 // Populated at runtime from localStorage; not hardcoded.
 // Schema per item: { id, type:'anime'|'trace'|'mcq'|'flash', term, reading, meaning, dateAdded, source }
 // Access via: JSON.parse(localStorage.getItem('learnedVault') || '[]')
+// ============================================================
+// CROSS-TAB REVIEW QUEUE
+// Items pushed here from: wrong MCQ answers, missed flashcards
+// Stored in localStorage under key 'reviewQueue'
+// Used by the Review tab's SM-2 engine
+// ============================================================
 
+function reviewQueueLoad() {
+  try { return JSON.parse(localStorage.getItem('reviewQueue') || '[]'); } catch(e) { return []; }
+}
+function reviewQueueSave(q) {
+  try { localStorage.setItem('reviewQueue', JSON.stringify(q)); } catch(e) {}
+}
+
+function reviewQueuePush(card) {
+  const q = reviewQueueLoad();
+  // Deduplicate by card.q
+  if (q.some(c => c.q === card.q)) return;
+  q.push({ ...card, addedAt: Date.now() });
+  reviewQueueSave(q);
+  updateReviewBadge();
+}
+
+function reviewQueueRemove(cardQ) {
+  const q = reviewQueueLoad().filter(c => c.q !== cardQ);
+  reviewQueueSave(q);
+  updateReviewBadge();
+}
+
+// Update the red badge count on sidebar REV button
+function updateReviewBadge() {
+  const q = reviewQueueLoad();
+  const badge = document.getElementById('revOverdueBadge');
+  if (!badge) return;
+  if (q.length > 0) {
+    badge.textContent = q.length > 99 ? '99+' : q.length;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
 // ─── DEEP STUDY UNIT DEFINITIONS (repurposed) ────────────────
 // These replace the APES unit names in the Deep Study (SM-2) engine.
 // The engine itself (dsQueue, SM-2 scheduling) is unchanged.
@@ -484,7 +525,20 @@ function flipCard() {
 
 function rateCard(knew) {
   if(knew) { fcKnown.add(fcIdx); fcMissed.delete(fcIdx); session.fcKnow++; rewardStudy(1); }
-  else { fcMissed.add(fcIdx); fcKnown.delete(fcIdx); session.fcMiss++; }
+  else {
+    fcMissed.add(fcIdx); fcKnown.delete(fcIdx); session.fcMiss++;
+    const card = fcPool[fcIdx];
+    if (card) {
+      reviewQueuePush({
+        id:   'fc_miss_' + fcIdx + '_' + Date.now(),
+        type: 'flash',
+        q:    card.q,
+        a:    card.a,
+        unit: card.unit || 'n5',
+        diff: card.diff || 'medium',
+      });
+    }
+  }
   updateFCStats();
   nextFlash();
 }
@@ -932,14 +986,25 @@ function renderMCQ() {
 function answerMCQ(choice) {
   if(mcqAnswered[mcqIdx]!==null) return;
   mcqAnswered[mcqIdx] = choice;
-  const correct = choice===mcqPool[mcqIdx].ans;
+  const q = mcqPool[mcqIdx];
+  const correct = choice === q.ans;
   if(correct){ mcqScore.c++; session.mcqC++; rewardStudy(1); }
-  else { mcqScore.w++; session.mcqW++; }
+  else {
+    mcqScore.w++; session.mcqW++;
+    // Push wrong MCQ to cross-tab review queue
+    reviewQueuePush({
+      id:   'mcq_' + mcqIdx + '_' + Date.now(),
+      type: 'mcq',
+      q:    q.q,
+      a:    q.opts[q.ans] + (q.exp ? '\n\n' + q.exp : ''),
+      unit: q.unit || 'n5',
+      diff: 'medium',
+    });
+  }
   updateStreak(correct);
   updateMCQStats();
   renderMCQ();
 }
-
 function nextMCQ() {
   if(!mcqPool.length) return;
   mcqIdx = (mcqIdx+1) % mcqPool.length;
@@ -2855,7 +2920,10 @@ function switchMode(mode, event) {
   if (mode === 'mcq')      document.getElementById('mcqMode').classList.remove('hidden');
   if (mode === 'anime')    document.getElementById('animeMode').classList.remove('hidden');
   if (mode === 'kana')     document.getElementById('kanaMode').classList.remove('hidden');
-  if (mode === 'review')   document.getElementById('reviewMode').classList.remove('hidden');
+if (mode === 'review') {
+    document.getElementById('reviewMode').classList.remove('hidden');
+    try { revInit(); } catch(e) {}
+  }
   if (mode === 'learned')  document.getElementById('learnedMode').classList.remove('hidden');
   if (mode === 'shop') {
     const shopEl = document.getElementById('shopMode');
@@ -4206,6 +4274,8 @@ try { initFlash(); initMCQ(); initCyc(); } catch(e) {}
 // Init widget slots on load
 renderWidgetSlots();
 renderNavbarSlots();
+// Init review badge
+updateReviewBadge();
 
 // Update mystery pack ticket display whenever shop opens
 const _baseSwitchMode = switchMode;
@@ -6657,7 +6727,283 @@ const DS_UNITS_DEEP = [
   { num: 8, name: 'Aquatic Systems' },
   { num: 9, name: 'Custom Set' },
 ];
+// ============================================================
+// REVIEW TAB ENGINE
+// Standalone SM-2 session powered by the cross-tab review queue
+// + per-unit Japanese sets (N5, N4, Hiragana, Katakana)
+// ============================================================
 
+const REVIEW_SETS = [
+  { id: 'queue',    label: 'Due for Review',   icon: '🔴', desc: 'Cards from wrong MCQ answers & missed flashcards', source: 'queue' },
+  { id: 'n5',      label: 'JLPT N5 Kanji',    icon: '漢', desc: 'All N5 kanji (from flashcards_n5.json)',          source: 'flashcards', unit: 'n5' },
+  { id: 'n4',      label: 'JLPT N4 Kanji',    icon: '字', desc: 'All N4 kanji (from flashcards_n4.json)',          source: 'flashcards', unit: 'n4' },
+  { id: 'hiragana',label: 'Hiragana',          icon: 'あ', desc: 'Hiragana recognition cards',                      source: 'kana',       unit: 'hiragana' },
+  { id: 'katakana',label: 'Katakana',          icon: 'ア', desc: 'Katakana recognition cards',                      source: 'kana',       unit: 'katakana' },
+];
+
+let revActiveSet  = null;
+let revQueue      = [];
+let revCardIdx    = 0;
+let revPhase      = 'question';
+let revSessionStats = { seen: 0, mastered: 0, again: 0 };
+
+function revLoadState(setId) {
+  try { return JSON.parse(localStorage.getItem('rev_state_' + setId) || '{}'); } catch(e) { return {}; }
+}
+function revSaveState(setId, state) {
+  try { localStorage.setItem('rev_state_' + setId, JSON.stringify(state)); } catch(e) {}
+}
+
+function revBuildCards(set) {
+  if (set.source === 'queue') {
+    return reviewQueueLoad().map(c => ({ ...c, _fromQueue: true }));
+  }
+  if (set.source === 'flashcards') {
+    const pool = (APP_FLASHCARDS || []).filter(c => c.unit === set.unit);
+    return pool.map(c => ({ ...c }));
+  }
+  if (set.source === 'kana') {
+    const pool = set.unit === 'hiragana'
+      ? (APP_HIRAGANA || [])
+      : (APP_KATAKANA || []);
+    return pool.map(k => ({
+      id:   'kana_' + k.kana,
+      type: 'kana',
+      q:    k.kana,
+      a:    k.romaji + (k.row ? '\nRow: ' + k.row : ''),
+      unit: set.unit,
+      diff: 'easy',
+    }));
+  }
+  return [];
+}
+
+function revInit() {
+  const grid = document.getElementById('revSetGrid');
+  if (!grid) return;
+  const qLen = reviewQueueLoad().length;
+  grid.innerHTML = REVIEW_SETS.map(set => {
+    const state = revLoadState(set.id);
+    const cards = revBuildCards(set);
+    const total = cards.length;
+    const mastered = cards.filter(c => { const s = state[c.q]; return s && s.ease >= 2.2 && s.reps >= 3; }).length;
+    const pct = total ? Math.round(mastered / total * 100) : 0;
+    const isQueue = set.source === 'queue';
+    const count = isQueue ? qLen : total;
+    const badge = isQueue && qLen > 0
+      ? '<span class="rev-set-badge">' + qLen + ' due</span>'
+      : pct >= 80
+        ? '<span class="rev-set-badge rev-set-badge--strong">★ ' + pct + '%</span>'
+        : total > 0
+          ? '<span class="rev-set-badge rev-set-badge--neutral">' + pct + '%</span>'
+          : '';
+    return `<div class="rev-set-card ${isQueue && qLen === 0 ? 'rev-set-card--empty' : ''}" onclick="revStartSet('${set.id}')">
+      <div class="rev-set-icon">${set.icon}</div>
+      <div class="rev-set-info">
+        <div class="rev-set-label">${set.label} ${badge}</div>
+        <div class="rev-set-desc">${set.desc}</div>
+        ${!isQueue && total > 0 ? '<div class="rev-set-bar"><div class="rev-set-bar-fill" style="width:' + pct + '%"></div></div>' : ''}
+      </div>
+      <div class="rev-set-count">${count > 0 ? count : '—'}</div>
+    </div>`;
+  }).join('');
+}
+
+function revStartSet(setId) {
+  const set = REVIEW_SETS.find(s => s.id === setId);
+  if (!set) return;
+  revActiveSet = setId;
+  const cards = revBuildCards(set);
+  if (!cards.length) { rewardPopup('No cards in this set yet!'); return; }
+  const state = revLoadState(setId);
+  revSessionStats = { seen: 0, mastered: 0, again: 0 };
+
+  // Attach SRS state
+  revQueue = cards.map(c => {
+    const s = state[c.q] || { ease: 2.0, interval: 0, reps: 0, lapses: 0, due: 0 };
+    return { ...c, _srs: { ...s } };
+  });
+
+  // Sort: due (due=0) first, then by interval ascending
+  revQueue.sort((a, b) => {
+    const ad = a._srs.due, bd = b._srs.due;
+    if (ad <= 0 && bd > 0) return -1;
+    if (bd <= 0 && ad > 0) return 1;
+    return a._srs.interval - b._srs.interval;
+  });
+
+  // Shuffle the due group
+  const cut = revQueue.findIndex(c => c._srs.due > 0);
+  const cutIdx = cut === -1 ? revQueue.length : cut;
+  for (let i = cutIdx - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [revQueue[i], revQueue[j]] = [revQueue[j], revQueue[i]];
+  }
+
+  revCardIdx = 0;
+  revPhase = 'question';
+
+  document.getElementById('revSetSelect').classList.add('hidden');
+  document.getElementById('revSession').classList.remove('hidden');
+  document.getElementById('revComplete').classList.add('hidden');
+  document.getElementById('revCardArea').classList.remove('hidden');
+  document.getElementById('revSetLabel').textContent = set.icon + ' ' + set.label;
+
+  revShowCard();
+  revRenderQueueMap();
+  revUpdateStats();
+}
+
+function revShowCard() {
+  if (revCardIdx >= revQueue.length) { revSessionEnd(); return; }
+  const card = revQueue[revCardIdx];
+  revPhase = 'question';
+
+  document.getElementById('revCardFront').classList.remove('hidden');
+  document.getElementById('revCardBack').classList.add('hidden');
+  document.getElementById('revComplete').classList.add('hidden');
+  document.getElementById('revCardArea').classList.remove('hidden');
+
+  // For kana/kanji show the character large; for MCQ show the question text
+  const isKanji = card.q && /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]/.test(card.q) && card.q.length <= 3;
+  document.getElementById('revQuestion').textContent = card.q;
+  document.getElementById('revQuestion').style.fontSize = isKanji ? '3rem' : '1.1rem';
+
+  const diff = card.diff || 'medium';
+  const diffColor = { easy: 'var(--correct)', medium: 'var(--warn)', hard: 'var(--wrong)' };
+  document.getElementById('revCardMeta').innerHTML =
+    (card.type ? '<span style="color:var(--accent3);margin-right:8px">' + card.type + '</span>' : '') +
+    '<span style="color:' + (diffColor[diff] || 'var(--muted)') + '">' + diff + '</span>' +
+    (card._srs.reps > 0 ? ' · seen ' + card._srs.reps + '× · ease ' + card._srs.ease.toFixed(1) : ' · new');
+
+  revUpdateStats();
+}
+
+function revFlip() {
+  if (revPhase !== 'question') return;
+  revPhase = 'answer';
+  const card = revQueue[revCardIdx];
+  document.getElementById('revCardFront').classList.add('hidden');
+  document.getElementById('revCardBack').classList.remove('hidden');
+  document.getElementById('revAnswerText').innerHTML = (card.a || '—').replace(/\n/g, '<br>');
+  document.getElementById('revQuestionStubText').textContent = card.q;
+  // Enable grade buttons
+  document.querySelectorAll('.rev-grade-btn').forEach(b => b.disabled = false);
+}
+
+// gradeBtn: 0=Again, 1=Hard, 2=Good, 3=Easy
+function revGrade(gradeBtn) {
+  if (revPhase !== 'answer') return;
+  revPhase = 'grade';
+
+  const card = revQueue[revCardIdx];
+  const srs = card._srs;
+  const q6Map = [0, 2, 4, 5];
+  const q6 = q6Map[gradeBtn];
+
+  if (q6 >= 3) {
+    if (srs.reps === 0) srs.interval = gradeBtn === 3 ? 4 : 1;
+    else if (srs.reps === 1) srs.interval = gradeBtn === 3 ? 14 : 6;
+    else srs.interval = Math.round(srs.interval * (gradeBtn === 1 ? 1.2 : srs.ease) * (gradeBtn === 3 ? 1.3 : 1));
+    srs.ease = Math.max(1.3, srs.ease + 0.1 - (5 - q6) * (0.08 + (5 - q6) * 0.02));
+    srs.reps++;
+    srs.due = srs.interval * 5;
+  } else {
+    srs.lapses++;
+    srs.reps = 0;
+    srs.interval = 1;
+    srs.ease = Math.max(1.3, srs.ease - 0.2);
+    srs.due = 0;
+  }
+
+  const mastered = srs.ease >= 2.2 && srs.reps >= 3;
+
+  // Persist SRS state
+  const state = revLoadState(revActiveSet);
+  state[card.q] = { ease: srs.ease, interval: srs.interval, reps: srs.reps, lapses: srs.lapses, due: srs.due };
+  revSaveState(revActiveSet, state);
+
+  // If card came from review queue and is now mastered, remove it from queue
+  if (card._fromQueue && mastered) {
+    reviewQueueRemove(card.q);
+  }
+  // If graded Good or Easy, also remove from cross-tab queue (resolved)
+  if (card._fromQueue && gradeBtn >= 2) {
+    reviewQueueRemove(card.q);
+  }
+
+  rewardStudy(1);
+  if (mastered) { rewardStudy(2); revSessionStats.mastered++; }
+  if (gradeBtn === 0) revSessionStats.again++;
+  revSessionStats.seen++;
+
+  // Reinsert: Again → +3, Hard → +5
+  if (gradeBtn === 0) {
+    const reinsert = { ...card, _srs: { ...srs } };
+    revQueue.splice(Math.min(revCardIdx + 3, revQueue.length), 0, reinsert);
+  } else if (gradeBtn === 1) {
+    const reinsert = { ...card, _srs: { ...srs } };
+    revQueue.splice(Math.min(revCardIdx + 5, revQueue.length), 0, reinsert);
+  }
+
+  document.querySelectorAll('.rev-grade-btn').forEach(b => b.disabled = true);
+  updateReviewBadge();
+
+  setTimeout(() => {
+    revCardIdx++;
+    if (revCardIdx >= revQueue.length) { revSessionEnd(); return; }
+    revShowCard();
+    revRenderQueueMap();
+    revUpdateStats();
+  }, 600);
+}
+
+function revUpdateStats() {
+  const total = revQueue.length;
+  const pct = total ? Math.round(revCardIdx / total * 100) : 0;
+  const fill = document.getElementById('revProgressFill');
+  if (fill) fill.style.width = pct + '%';
+  const mastEl = document.getElementById('revMastered');
+  const remEl = document.getElementById('revRemaining');
+  if (mastEl) mastEl.textContent = revSessionStats.mastered;
+  if (remEl) remEl.textContent = Math.max(0, total - revCardIdx);
+}
+
+function revRenderQueueMap() {
+  const el = document.getElementById('revQueueMap');
+  if (!el) return;
+  const preview = revQueue.slice(revCardIdx, revCardIdx + 20);
+  el.innerHTML = preview.map((c, i) => {
+    const isNext = i === 0;
+    const isFailed = c._srs.lapses > 0 && c._srs.due === 0;
+    const isMastered = c._srs.ease >= 2.2 && c._srs.reps >= 3;
+    const color = isFailed ? 'var(--wrong)' : isMastered ? 'var(--correct)' : isNext ? 'var(--accent)' : 'var(--border)';
+    const opacity = 1 - (i / 20) * 0.6;
+    const size = isNext ? '13px' : '10px';
+    return '<div class="ds-queue-dot" title="' + (c.q || '').slice(0, 40) + '" style="background:' + color + ';opacity:' + opacity + ';width:' + size + ';height:' + size + '"></div>';
+  }).join('');
+}
+
+function revSessionEnd() {
+  document.getElementById('revCardArea').classList.add('hidden');
+  document.getElementById('revComplete').classList.remove('hidden');
+  const { seen, mastered, again } = revSessionStats;
+  document.getElementById('revCompleteEmoji').textContent = mastered >= seen * 0.7 ? '🏆' : mastered >= 2 ? '⭐' : '💪';
+  document.getElementById('revCompleteTitle').textContent = mastered >= 5 ? 'Crushing it!' : seen >= 10 ? 'Solid Session!' : 'Session Done!';
+  document.getElementById('revCompleteSub').textContent =
+    seen + ' reviewed · ' + mastered + ' mastered · ' + again + ' again · 🎟️ ×' + (seen + mastered * 2);
+  if (seen > 0) rewardStudy(Math.floor(seen / 2));
+  updateReviewBadge();
+}
+
+function revExitSession() {
+  revActiveSet = null;
+  document.getElementById('revSession').classList.add('hidden');
+  document.getElementById('revSetSelect').classList.remove('hidden');
+  revInit();
+}
+
+function revContinue() { revStartSet(revActiveSet); }
 function dsLoadState(unit) {
   try { return JSON.parse(localStorage.getItem('ds_state_u' + unit) || '{}'); } catch(e) { return {}; }
 }
@@ -6936,16 +7282,30 @@ function dsUpdateSlider(val) {
   document.getElementById('dsSliderVal').style.color = color;
 }
 
-function dsGradeSubmit() {
-  const grade = parseInt(document.getElementById('dsGradeSlider').value);
+// dsGrade: 0=Again, 1=Hard, 2=Good, 3=Easy
+function dsGradeSubmit(gradeBtn) {
+  // Support both old slider call (no arg) and new button call (0–3)
+  let btnGrade;
+  if (gradeBtn !== undefined) {
+    btnGrade = parseInt(gradeBtn);
+  } else {
+    // Legacy slider fallback
+    const sliderVal = parseInt(document.getElementById('dsGradeSlider').value);
+    btnGrade = sliderVal <= 2 ? 0 : sliderVal <= 5 ? 1 : sliderVal <= 8 ? 2 : 3;
+  }
+
   const card = dsQueue[dsCardIdx];
   const srs = card._srs;
-  const q6 = Math.round(grade * 0.5);
+
+  // SM-2 mapping: Again=0, Hard=1, Good=2, Easy=3
+  // q6 equivalent for SM-2: Again→0, Hard→2, Good→4, Easy→5
+  const q6Map = [0, 2, 4, 5];
+  const q6 = q6Map[btnGrade];
 
   if (q6 >= 3) {
-    if (srs.reps === 0) srs.interval = 1;
-    else if (srs.reps === 1) srs.interval = 6;
-    else srs.interval = Math.round(srs.interval * srs.ease);
+    if (srs.reps === 0) srs.interval = btnGrade === 3 ? 4 : 1;
+    else if (srs.reps === 1) srs.interval = btnGrade === 3 ? 14 : 6;
+    else srs.interval = Math.round(srs.interval * (btnGrade === 1 ? 1.2 : srs.ease) * (btnGrade === 3 ? 1.3 : 1));
     srs.ease = Math.max(1.3, srs.ease + 0.1 - (5 - q6) * (0.08 + (5 - q6) * 0.02));
     srs.reps++;
     srs.due = srs.interval * 5;
@@ -6959,25 +7319,37 @@ function dsGradeSubmit() {
 
   const mastered = srs.ease >= 2.2 && srs.reps >= 3;
 
-  const state = dsLoadState(dsActiveUnit);
+  const stateKey = dsActiveUnit !== null ? dsActiveUnit : '_review';
+  const state = dsLoadState(stateKey);
   state[card.q] = { ease: srs.ease, interval: srs.interval, reps: srs.reps, lapses: srs.lapses, due: srs.due };
-  dsSaveState(dsActiveUnit, state);
+  dsSaveState(stateKey, state);
 
-  const key = grade <= 3 ? 'grade_low' : grade <= 6 ? 'grade_mid' : 'grade_high';
-  dsMascotSay(key);
+  const mascotKey = btnGrade === 0 ? 'grade_low' : btnGrade === 1 ? 'grade_mid' : 'grade_high';
+  dsMascotSay(mascotKey);
 
   rewardStudy(1);
   if (mastered) { rewardStudy(2); dsSessionStats.mastered++; }
   dsSessionStats.seen++;
 
-  if (q6 < 3) {
+  // Again → reinsert after 3 cards; Hard → reinsert after 5
+  if (btnGrade === 0) {
+    const reinsert = { ...card, _srs: { ...srs } };
+    const insertAt = Math.min(dsCardIdx + 3, dsQueue.length);
+    dsQueue.splice(insertAt, 0, reinsert);
+  } else if (btnGrade === 1) {
     const reinsert = { ...card, _srs: { ...srs } };
     const insertAt = Math.min(dsCardIdx + 5, dsQueue.length);
     dsQueue.splice(insertAt, 0, reinsert);
   }
 
-  document.getElementById('dsGradeBtn').disabled = true;
-  document.getElementById('dsGradeBtn').textContent = grade <= 3 ? '💀 Coming back soon' : grade <= 6 ? '↩️ Spaced out a bit' : '✓ Interval extended';
+  // Disable all grade buttons
+  document.querySelectorAll('.ds-grade-btn').forEach(b => b.disabled = true);
+  // Legacy btn support
+  const legacyBtn = document.getElementById('dsGradeBtn');
+  if (legacyBtn) { legacyBtn.disabled = true; legacyBtn.textContent = ['💀 Again', '😅 Hard', '✓ Good', '⚡ Easy'][btnGrade]; }
+
+  // Update overdue badge after grading
+  setTimeout(updateReviewBadge, 900);
 
   setTimeout(() => {
     dsCardIdx++;
