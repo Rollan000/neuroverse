@@ -5598,3 +5598,85 @@ a:hover { color: #e0e0e8; }
   pointer-events: none;
 }
 
+/* ─── Review tab — set selector ───────────────────────────── */
+.rev-set-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.15s;
+}
+.rev-set-card:hover { border-color: var(--accent3); background: var(--surface2); }
+.rev-set-card--empty { opacity: 0.5; cursor: default; }
+.rev-set-card--empty:hover { border-color: var(--border); background: var(--surface); }
+.rev-set-icon { font-size: 1.8rem; flex-shrink: 0; width: 36px; text-align: center; }
+.rev-set-info { flex: 1; min-width: 0; }
+.rev-set-label { font-size: 14px; font-weight: 700; margin-bottom: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rev-set-desc  { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.rev-set-bar   { height: 3px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.rev-set-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.rev-set-count { font-family: 'Space Mono', monospace; font-size: 13px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
+.rev-set-badge { font-family: 'Space Mono', monospace; font-size: 9px; padding: 2px 7px; border-radius: 10px; background: rgba(255,80,80,0.15); color: var(--wrong); border: 1px solid rgba(255,80,80,0.25); }
+.rev-set-badge--strong { background: rgba(80,255,130,0.12); color: var(--correct); border-color: rgba(80,255,130,0.25); }
+.rev-set-badge--neutral { background: rgba(255,255,255,0.06); color: var(--muted); border-color: var(--border); }
+
+/* ─── Review tab — grade buttons (shared with Deep Study) ──── */
+.rev-grade-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.rev-grade-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, opacity 0.15s;
+  line-height: 1;
+  font-family: inherit;
+}
+.rev-grade-btn span { font-size: 9px; font-family: 'Space Mono', monospace; color: var(--muted); font-weight: 400; }
+.rev-grade-btn:hover:not(:disabled) { transform: translateY(-2px); }
+.rev-grade-btn:disabled { opacity: 0.35; cursor: default; transform: none; }
+.rev-grade-btn--again { border-color: rgba(255,80,80,0.35);  background: rgba(255,80,80,0.08); }
+.rev-grade-btn--again:hover:not(:disabled) { background: rgba(255,80,80,0.18); border-color: var(--wrong); }
+.rev-grade-btn--hard  { border-color: rgba(255,170,50,0.35); background: rgba(255,170,50,0.08); }
+.rev-grade-btn--hard:hover:not(:disabled)  { background: rgba(255,170,50,0.18); border-color: var(--warn); }
+.rev-grade-btn--good  { border-color: rgba(100,210,140,0.35);background: rgba(100,210,140,0.08); }
+.rev-grade-btn--good:hover:not(:disabled)  { background: rgba(100,210,140,0.18); border-color: var(--correct); }
+.rev-grade-btn--easy  { border-color: rgba(130,160,255,0.35);background: rgba(130,160,255,0.08); }
+.rev-grade-btn--easy:hover:not(:disabled)  { background: rgba(130,160,255,0.18); border-color: var(--accent); }
+
+/* ─── Sidebar overdue badge ────────────────────────────────── */
+.rev-overdue-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--wrong, #ff5050);
+  color: #fff;
+  font-size: 9px;
+  font-family: 'Space Mono', monospace;
+  font-weight: 700;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
