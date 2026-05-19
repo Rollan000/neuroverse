@@ -88,8 +88,9 @@
     <button class="sb-nav-item" onclick="switchMode('mcq',event);setSbActive(this)" data-mode="mcq">
       <span class="sb-code">MCQ</span><span class="sb-label">quiz</span>
     </button>
-    <button class="sb-nav-item" onclick="switchMode('review',event);setSbActive(this)" data-mode="review">
+<button class="sb-nav-item" onclick="switchMode('review',event);setSbActive(this)" data-mode="review" style="position:relative">
       <span class="sb-code">REV</span><span class="sb-label">review</span>
+      <span class="rev-overdue-badge" id="revOverdueBadge" style="display:none"></span>
     </button>
     <button class="sb-nav-item" onclick="switchMode('learned',event);setSbActive(this)" data-mode="learned">
       <span class="sb-code">LRN</span><span class="sb-label">learned</span>
@@ -302,17 +303,20 @@
               <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px">MODEL ANSWER <span style="color:var(--muted);margin-left:6px" id="dsKeywordHint"></span></div>
               <div id="dsAnswerText" style="font-size:14px;line-height:1.75;margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"></div>
 
-              <!-- Self-grade -->
+<!-- Self-grade — 4 SM-2 buttons -->
               <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
-                <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
-                  <span>How well did you know this?</span>
-                  <span id="dsSliderVal" style="font-size:16px;font-weight:800;color:var(--warn);transition:color 0.2s">5</span>
+                <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">How well did you know this?</div>
+                <!-- Hidden slider kept for JS fallback compat -->
+                <input type="range" min="1" max="10" value="5" id="dsGradeSlider" oninput="dsUpdateSlider(this.value)" style="display:none">
+                <span id="dsSliderVal" style="display:none">5</span>
+                <div class="rev-grade-row" id="dsGradeBtnRow">
+                  <button class="rev-grade-btn rev-grade-btn--again ds-grade-btn" onclick="dsGradeSubmit(0)">Again<span>&lt;1d</span></button>
+                  <button class="rev-grade-btn rev-grade-btn--hard  ds-grade-btn" onclick="dsGradeSubmit(1)">Hard<span>~3d</span></button>
+                  <button class="rev-grade-btn rev-grade-btn--good  ds-grade-btn" onclick="dsGradeSubmit(2)">Good<span>~7d</span></button>
+                  <button class="rev-grade-btn rev-grade-btn--easy  ds-grade-btn" onclick="dsGradeSubmit(3)">Easy<span>~14d</span></button>
                 </div>
-                <input type="range" min="1" max="10" value="5" id="dsGradeSlider" oninput="dsUpdateSlider(this.value)" style="width:100%;accent-color:var(--accent);cursor:pointer;margin-bottom:6px">
-                <div style="display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);margin-bottom:12px">
-                  <span>💀 blank</span><span>😅 kinda</span><span>🧠 im will be the next hokage!</span>
-                </div>
-                <button class="btn btn-primary" onclick="dsGradeSubmit()" style="width:100%" id="dsGradeBtn">Lock In Grade</button>
+                <!-- Legacy lock-in btn kept in DOM hidden (JS refs it) -->
+                <button id="dsGradeBtn" style="display:none" onclick="dsGradeSubmit()">Lock In Grade</button>
               </div>
             </div>
           </div>
@@ -487,20 +491,86 @@
              Items auto-added from: Anime word clicks, Kanji trace,
              MCQ wrong answers
   ═══════════════════════════════════════════════════════════ -->
-  <div id="reviewMode" class="hidden">
-    <div style="text-align:center;padding:60px 20px;color:var(--muted)">
-      <div style="font-size:48px;margin-bottom:16px">🧠</div>
-      <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:8px">Spaced Repetition Review</div>
-      <div style="font-size:13px;line-height:1.7">
-        SM-2 spaced repetition across all your Japanese content.<br>
-        Items appear from: Anime study, Kanji tracing, MCQ wrong answers.
+<div id="reviewMode" class="hidden">
+
+    <!-- Set selector -->
+    <div id="revSetSelect">
+      <div style="margin-bottom:16px">
+        <div style="font-size:18px;font-weight:800;margin-bottom:4px">🧠 Review</div>
+        <div style="font-size:12px;color:var(--muted)">SM-2 spaced repetition · Again / Hard / Good / Easy</div>
       </div>
-      <div style="margin-top:24px;padding:16px;background:var(--surface);border:1px dashed var(--border);border-radius:12px;font-family:'Space Mono',monospace;font-size:11px;color:var(--accent3)">
-        [ REVIEW — TODO ]<br><br>
-        Port Deep Study unit cards → Japanese vocab sets<br>
-        Sets: Hiragana, Katakana, JLPT N5, JLPT N4, Episode 1…3, Custom<br>
-        Same SM-2 engine + mascot coaching from Flash/Deep Study tab
+      <div id="revSetGrid" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+
+    <!-- Session screen -->
+    <div id="revSession" class="hidden">
+
+      <!-- Header row -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="revExitSession()" style="font-size:12px;padding:6px 12px">← Sets</button>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="revSetLabel">Review</div>
+          <div style="height:4px;background:var(--border);border-radius:2px;margin-top:4px;overflow:hidden">
+            <div id="revProgressFill" style="height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width 0.5s ease"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
+          <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:15px;font-weight:700;color:var(--correct)" id="revMastered">0</div><div style="font-family:'Space Mono',monospace;font-size:9px;color:var(--muted)">MASTERED</div></div>
+          <div style="text-align:center"><div style="font-family:'Space Mono',monospace;font-size:15px;font-weight:700;color:var(--warn)" id="revRemaining">0</div><div style="font-family:'Space Mono',monospace;font-size:9px;color:var(--muted)">LEFT</div></div>
+        </div>
       </div>
+
+      <!-- Card area -->
+      <div id="revCardArea">
+
+        <!-- FRONT -->
+        <div id="revCardFront" class="card active-card" style="cursor:pointer;user-select:none;text-align:center;padding:32px 20px" onclick="revFlip()">
+          <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:2px;color:var(--accent3);text-transform:uppercase;margin-bottom:16px">tap to reveal answer</div>
+          <div id="revQuestion" style="font-size:1.1rem;font-weight:700;line-height:1.5;margin-bottom:12px"></div>
+          <div style="font-family:'Space Mono',monospace;font-size:11px;color:var(--muted)" id="revCardMeta"></div>
+          <div style="margin-top:18px;font-family:'Space Mono',monospace;font-size:10px;color:var(--border)">↓ tap to flip</div>
+        </div>
+
+        <!-- BACK -->
+        <div id="revCardBack" class="card active-card hidden">
+
+          <!-- Question stub -->
+          <div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:14px;border-left:3px solid var(--accent3)">
+            <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent3);margin-bottom:4px">Q</div>
+            <div id="revQuestionStubText" style="font-size:13px;font-weight:600;line-height:1.45;color:var(--text)"></div>
+          </div>
+
+          <!-- Answer reveal -->
+          <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:2px;color:var(--accent);text-transform:uppercase;margin-bottom:6px">ANSWER</div>
+          <div id="revAnswerText" style="font-size:15px;line-height:1.7;margin-bottom:20px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)"></div>
+
+          <!-- Grade buttons -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+            <div style="font-family:'Space Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">How well did you know this?</div>
+            <div class="rev-grade-row">
+              <button class="rev-grade-btn rev-grade-btn--again"  onclick="revGrade(0)" disabled>Again<span>&lt;1d</span></button>
+              <button class="rev-grade-btn rev-grade-btn--hard"   onclick="revGrade(1)" disabled>Hard<span>~3d</span></button>
+              <button class="rev-grade-btn rev-grade-btn--good"   onclick="revGrade(2)" disabled>Good<span>~7d</span></button>
+              <button class="rev-grade-btn rev-grade-btn--easy"   onclick="revGrade(3)" disabled>Easy<span>~14d</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Queue map -->
+      <div id="revQueueMap" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:4px" title="Your queue"></div>
+
+      <!-- Complete -->
+      <div id="revComplete" class="hidden" style="text-align:center;padding:24px 16px">
+        <div style="font-size:44px;margin-bottom:10px" id="revCompleteEmoji">🏆</div>
+        <div style="font-size:20px;font-weight:800;margin-bottom:6px" id="revCompleteTitle">Session Done!</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:20px" id="revCompleteSub"></div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="revContinue()">Review More 🔄</button>
+          <button class="btn btn-secondary" onclick="revExitSession()">Back to Sets</button>
+        </div>
+      </div>
+
     </div>
   </div>
 
