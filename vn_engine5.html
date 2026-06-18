@@ -1,0 +1,3308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>VN Engine — Base</title>
+<style>
+/* ============================================================
+   VN ENGINE — CORE STYLES
+   Dark / minimal / restrained. No ornamentation by default.
+   ============================================================ */
+
+:root{
+  --bg-black:#0a0a0c;
+  --panel:#13131a;
+  --panel-2:#1a1a22;
+  --line:#2a2a34;
+  --line-soft:#1f1f28;
+  --text:#e8e6e3;
+  --text-dim:#9b98a3;
+  --text-faint:#5c5a66;
+  --accent:#8a7cff;
+  --accent-dim:#4a4470;
+  --danger:#ff6b6b;
+  --warn:#e8c468;
+  --ok:#6bdc9c;
+
+  --ui-radius:2px;
+  --ui-speed:160ms;
+
+  --vn-text-size:19px;
+  --vn-line-height:1.6;
+  --vn-name-size:14px;
+
+  --furigana-display:inline;
+}
+
+*{box-sizing:border-box;}
+html,body{
+  margin:0; padding:0;
+  width:100%; height:100%;
+  background:var(--bg-black);
+  color:var(--text);
+  font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',-apple-system,sans-serif;
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+  user-select:none;
+}
+
+button{
+  font-family:inherit;
+  cursor:pointer;
+  background:none;
+  border:none;
+  color:inherit;
+}
+button:focus,input:focus{outline:1px solid var(--accent-dim);}
+
+/* scrollbar minimal */
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+
+/* ============================================================
+   STAGE — full viewport game container
+   ============================================================ */
+#vn-root{
+  position:relative;
+  width:100%;
+  height:100vh;
+  height:100dvh;
+  overflow:hidden;
+  background:#000;
+}
+
+/* ---- Background layer (crossfade pair) ---- */
+.bg-layer{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  background-size:cover;
+  background-position:center;
+  transition:opacity 600ms ease;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:min(40vw,420px);
+  line-height:1;
+}
+#bg-a{z-index:1;}
+#bg-b{z-index:2; opacity:0;}
+
+/* slight vignette so sprites/text pop without extra chrome */
+#vn-root::after{
+  content:"";
+  position:absolute; inset:0;
+  background:radial-gradient(ellipse at center 40%, transparent 45%, rgba(0,0,0,0.55) 100%);
+  pointer-events:none;
+  z-index:5;
+}
+
+/* ---- Sprite layer ---- */
+#sprite-layer{
+  position:absolute; inset:0;
+  z-index:3;
+  pointer-events:none;
+}
+
+/* ---- Weather layer (rain, etc.) — sits above sprites, below the
+   vignette, so precipitation reads as part of the scene's lighting
+   rather than a flat overlay slapped on top of everything. Opacity
+   is animated by JS (rAF) rather than via CSS transition, since the
+   fade needs to track a tunable duration tied to scene changes. ---- */
+#weather-layer{
+  position:absolute; inset:0;
+  z-index:4;
+  pointer-events:none;
+  opacity:0;
+}
+#weather-layer canvas{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  display:block;
+}
+
+.sprite{
+  position:absolute;
+  bottom:0;
+  height:88%;
+  max-width:46%;
+  object-fit:contain;
+  filter:drop-shadow(0 14px 30px rgba(0,0,0,0.5));
+  transition:
+    transform var(--ui-speed) ease,
+    opacity 380ms ease,
+    filter 200ms ease;
+  will-change:transform,opacity;
+}
+/* emoji-placeholder sprite mode */
+.sprite.is-emoji{
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  font-size:min(34vh,300px);
+  height:88%;
+  filter:drop-shadow(0 10px 18px rgba(0,0,0,0.6));
+}
+
+.sprite[data-pos="left"]{ left:4%;  transform:translateX(0) scale(1); }
+.sprite[data-pos="center"]{ left:50%; transform:translateX(-50%) scale(1); }
+.sprite[data-pos="right"]{ left:auto; right:4%; transform:translateX(0) scale(1); }
+
+.sprite.is-hidden{ opacity:0; }
+.sprite.is-dimmed{ filter:brightness(0.45) saturate(0.7); }
+.sprite.is-active{ filter:brightness(1) saturate(1) drop-shadow(0 14px 30px rgba(0,0,0,0.5)); }
+
+/* enter/exit transitions, applied as one-shot animation classes */
+@keyframes slideInLeft{ from{ transform:translateX(-120%) scale(1); opacity:0; } to{ transform:translateX(0) scale(1); opacity:1; } }
+@keyframes slideInCenter{ from{ transform:translateX(-50%) translateY(40px) scale(0.96); opacity:0; } to{ transform:translateX(-50%) translateY(0) scale(1); opacity:1; } }
+@keyframes slideInRight{ from{ transform:translateX(120%) scale(1); opacity:0; } to{ transform:translateX(0) scale(1); opacity:1; } }
+@keyframes slideOutLeft{ from{ transform:translateX(0) scale(1); opacity:1; } to{ transform:translateX(-120%) scale(1); opacity:0; } }
+@keyframes slideOutCenter{ from{ transform:translateX(-50%) translateY(0) scale(1); opacity:1; } to{ transform:translateX(-50%) translateY(40px) scale(0.96); opacity:0; } }
+@keyframes slideOutRight{ from{ transform:translateX(0) scale(1); opacity:1; } to{ transform:translateX(120%) scale(1); opacity:0; } }
+@keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
+@keyframes fadeOut{ from{ opacity:1; } to{ opacity:0; } }
+
+.anim-slideInLeft{ animation:slideInLeft 420ms cubic-bezier(.2,.7,.3,1) forwards; }
+.anim-slideInCenter{ animation:slideInCenter 420ms cubic-bezier(.2,.7,.3,1) forwards; }
+.anim-slideInRight{ animation:slideInRight 420ms cubic-bezier(.2,.7,.3,1) forwards; }
+.anim-slideOutLeft{ animation:slideOutLeft 320ms ease forwards; }
+.anim-slideOutCenter{ animation:slideOutCenter 320ms ease forwards; }
+.anim-slideOutRight{ animation:slideOutRight 320ms ease forwards; }
+.anim-fadeIn{ animation:fadeIn 380ms ease forwards; }
+.anim-fadeOut{ animation:fadeOut 280ms ease forwards; }
+
+/* idle motion loops — applied continuously while sprite is "active speaker" or just present */
+@keyframes idleBob{
+  0%,100%{ transform:translateY(0); }
+  50%{ transform:translateY(-7px); }
+}
+@keyframes speakPulse{
+  0%,100%{ transform:translateY(0) scale(1); }
+  50%{ transform:translateY(-1.2px) scale(1.004); }
+}
+@keyframes motionNod{
+  0%,100%{ transform:rotate(0deg) translateY(0); }
+  30%{ transform:rotate(-2.2deg) translateY(2px); }
+  60%{ transform:rotate(1.4deg) translateY(0); }
+}
+@keyframes motionShake{
+  0%,100%{ transform:translateX(0); }
+  20%{ transform:translateX(-9px) rotate(-1deg); }
+  40%{ transform:translateX(8px) rotate(1deg); }
+  60%{ transform:translateX(-6px) rotate(-0.6deg); }
+  80%{ transform:translateX(5px) rotate(0.6deg); }
+}
+@keyframes motionTilt{
+  0%,100%{ transform:rotate(0deg); }
+  50%{ transform:rotate(3deg); }
+}
+@keyframes motionJump{
+  0%,100%{ transform:translateY(0); }
+  40%{ transform:translateY(-22px); }
+  60%{ transform:translateY(-22px); }
+}
+
+/* wrapper div per sprite handles position; inner img/emoji handles the motion keyframe,
+   so transforms don't fight each other */
+.sprite-motion-idle{ animation:idleBob 2.6s ease-in-out infinite; }
+.sprite-motion-speak{ animation:speakPulse 2.2s ease-in-out infinite; }
+.sprite-motion-nod{ animation:motionNod 600ms ease-in-out 1; }
+.sprite-motion-shake{ animation:motionShake 520ms ease-in-out 1; }
+.sprite-motion-tilt{ animation:motionTilt 900ms ease-in-out infinite; }
+.sprite-motion-jump{ animation:motionJump 420ms ease-in-out 1; }
+
+/* ============================================================
+   TEXTBOX
+   ============================================================ */
+#textbox-wrap{
+  position:absolute;
+  left:0; right:0; bottom:0;
+  z-index:10;
+  padding:0 3.2vw 3vh;
+  display:flex;
+  justify-content:center;
+  pointer-events:none;
+}
+#textbox-wrap.is-visible{ pointer-events:auto; }
+
+#textbox{
+  width:min(1100px, 100%);
+  background:rgba(11,11,14,0.86);
+  border:1px solid var(--line);
+  border-radius:var(--ui-radius);
+  padding:18px 26px 20px;
+  backdrop-filter:blur(6px);
+  opacity:0;
+  transform:translateY(14px);
+  transition:opacity 220ms ease, transform 220ms ease;
+}
+#textbox-wrap.is-visible #textbox{ opacity:1; transform:translateY(0); }
+
+#speaker-name{
+  font-size:var(--vn-name-size);
+  letter-spacing:0.06em;
+  color:var(--accent);
+  margin-bottom:8px;
+  font-weight:600;
+  min-height:1em;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+#speaker-name .name-rule{
+  flex:0 0 auto;
+  width:14px; height:1px;
+  background:var(--accent-dim);
+}
+#speaker-name:empty{ display:none; }
+
+#dialogue-text{
+  font-size:var(--vn-text-size);
+  line-height:var(--vn-line-height);
+  color:var(--text);
+  min-height:calc(var(--vn-text-size) * var(--vn-line-height) * 2);
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+.tag-red{color:var(--danger);}
+.tag-blue{color:#7ab8ff;}
+.tag-gold,.tag-warn{color:var(--warn);}
+.tag-green{color:var(--ok);}
+.tag-dim{color:var(--text-faint);}
+.tag-b{font-weight:700;}
+.tag-i{font-style:italic;}
+
+@keyframes charShake{
+  0%,100%{ transform:translate(0,0); }
+  25%{ transform:translate(-1.5px,1px); }
+  50%{ transform:translate(1.5px,-1px); }
+  75%{ transform:translate(-1px,-1px); }
+}
+@keyframes charWave{
+  0%,100%{ transform:translateY(0); }
+  50%{ transform:translateY(-5px); }
+}
+.fx-shake{ display:inline-block; animation:charShake 220ms ease-in-out infinite; }
+.fx-wave{ display:inline-block; animation:charWave 600ms ease-in-out infinite; }
+
+ruby.furigana-rt{ ruby-position:over; }
+rt{
+  font-size:0.62em;
+  color:var(--text-dim);
+  display:var(--furigana-display);
+  user-select:none;
+}
+
+/* continue indicator */
+#continue-indicator{
+  position:absolute;
+  right:22px; bottom:14px;
+  width:8px; height:8px;
+  border-right:2px solid var(--text-dim);
+  border-bottom:2px solid var(--text-dim);
+  transform:rotate(45deg);
+  opacity:0;
+  animation:continueBlink 1.1s ease-in-out infinite;
+}
+#textbox-wrap.show-continue #continue-indicator{ opacity:1; }
+@keyframes continueBlink{
+  0%,100%{ opacity:0.15; transform:rotate(45deg) translate(0,0); }
+  50%{ opacity:0.85; transform:rotate(45deg) translate(2px,2px); }
+}
+
+/* ============================================================
+   TOP UI BAR (auto/skip/log/settings/save/load) — minimal, hidden until hover near top
+   ============================================================ */
+#top-bar{
+  position:absolute;
+  top:0; left:0; right:0;
+  z-index:30;
+  display:flex;
+  justify-content:flex-end;
+  gap:4px;
+  padding:10px 14px;
+  background:linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+  opacity:0;
+  transform:translateY(-6px);
+  transition:opacity var(--ui-speed) ease, transform var(--ui-speed) ease;
+  pointer-events:none;
+}
+#vn-root:hover #top-bar,
+#top-bar.force-show{
+  opacity:1; transform:translateY(0); pointer-events:auto;
+}
+
+.ui-btn{
+  font-size:11px;
+  letter-spacing:0.05em;
+  color:var(--text-dim);
+  padding:7px 12px;
+  border:1px solid var(--line);
+  border-radius:var(--ui-radius);
+  background:rgba(15,15,19,0.7);
+  transition:border-color var(--ui-speed), color var(--ui-speed);
+}
+.ui-btn:hover{ color:var(--text); border-color:var(--accent-dim); }
+.ui-btn.is-on{ color:var(--accent); border-color:var(--accent-dim); }
+
+/* ============================================================
+   PANELS (settings / log / stats / save-load) — shared modal shell
+   ============================================================ */
+.panel-overlay{
+  position:absolute; inset:0;
+  z-index:50;
+  background:rgba(6,6,8,0.72);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity 180ms ease;
+}
+.panel-overlay.is-open{ opacity:1; pointer-events:auto; }
+
+.panel{
+  width:min(640px, 92vw);
+  max-height:84vh;
+  overflow-y:auto;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--ui-radius);
+  padding:26px 28px 28px;
+  transform:translateY(10px) scale(0.985);
+  opacity:0;
+  transition:transform 220ms cubic-bezier(.2,.7,.3,1), opacity 220ms ease;
+}
+.panel-overlay.is-open .panel{ transform:translateY(0) scale(1); opacity:1; }
+
+.panel-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:20px;
+  padding-bottom:14px;
+  border-bottom:1px solid var(--line-soft);
+}
+.panel-title{
+  font-size:13px;
+  letter-spacing:0.1em;
+  text-transform:uppercase;
+  color:var(--text-dim);
+}
+.panel-close{
+  font-size:18px;
+  color:var(--text-faint);
+  line-height:1;
+  padding:4px 8px;
+}
+.panel-close:hover{ color:var(--text); }
+
+.setting-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  padding:13px 0;
+  border-bottom:1px solid var(--line-soft);
+}
+.setting-row:last-child{ border-bottom:none; }
+.setting-label{
+  font-size:13.5px;
+  color:var(--text);
+}
+.setting-sub{
+  font-size:11px;
+  color:var(--text-faint);
+  margin-top:2px;
+}
+.setting-control{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+/* slider */
+input[type="range"]{
+  -webkit-appearance:none;
+  width:160px;
+  height:2px;
+  background:var(--line);
+  border-radius:2px;
+  outline:none;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:13px; height:13px;
+  border-radius:50%;
+  background:var(--accent);
+  cursor:pointer;
+  transition:transform 120ms ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover{ transform:scale(1.18); }
+input[type="range"]::-moz-range-thumb{
+  width:13px; height:13px; border-radius:50%;
+  background:var(--accent); border:none; cursor:pointer;
+}
+.slider-val{
+  font-size:11px;
+  color:var(--text-faint);
+  width:34px;
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+
+/* toggle switch */
+.toggle{
+  position:relative;
+  width:38px; height:21px;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:11px;
+  transition:background var(--ui-speed);
+}
+.toggle::after{
+  content:"";
+  position:absolute;
+  top:2px; left:2px;
+  width:15px; height:15px;
+  border-radius:50%;
+  background:var(--text-faint);
+  transition:transform var(--ui-speed) ease, background var(--ui-speed) ease;
+}
+.toggle.is-on{ background:var(--accent-dim); border-color:var(--accent); }
+.toggle.is-on::after{ transform:translateX(15px); background:var(--accent); }
+
+/* select pill group (text speed presets etc, optional use) */
+.pill-group{ display:flex; gap:6px; }
+.pill{
+  font-size:11px;
+  padding:6px 10px;
+  border:1px solid var(--line);
+  border-radius:var(--ui-radius);
+  color:var(--text-faint);
+}
+.pill.is-active{ color:var(--accent); border-color:var(--accent-dim); }
+
+/* log panel entries */
+.log-entry{ padding:10px 0; border-bottom:1px solid var(--line-soft); }
+.log-entry:last-child{ border-bottom:none; }
+.log-name{ font-size:11px; color:var(--accent); margin-bottom:3px; letter-spacing:0.04em; }
+.log-text{ font-size:14px; color:var(--text-dim); line-height:1.55; }
+#log-empty{ color:var(--text-faint); font-size:13px; padding:20px 0; text-align:center; }
+
+/* ============================================================
+   STATS PANEL — one block per character, one bar per stat
+   ============================================================ */
+.stat-char-block{ padding:16px 0; border-bottom:1px solid var(--line-soft); }
+.stat-char-block:last-child{ border-bottom:none; }
+.stat-char-name{
+  font-size:13.5px;
+  color:var(--text);
+  letter-spacing:0.04em;
+  margin-bottom:10px;
+}
+.stat-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:5px 0;
+}
+.stat-row-label{
+  flex:0 0 64px;
+  font-size:11px;
+  color:var(--text-dim);
+  text-transform:uppercase;
+  letter-spacing:0.04em;
+}
+.stat-row-track{
+  flex:1 1 auto;
+  height:6px;
+  border-radius:3px;
+  background:var(--panel-2);
+  border:1px solid var(--line-soft);
+  overflow:hidden;
+}
+.stat-row-fill{
+  height:100%;
+  border-radius:3px 0 0 3px;
+  background:var(--accent);
+  transition:width 220ms ease;
+}
+.stat-row-fill.is-jealousy{ background:var(--danger); }
+.stat-row-value{
+  flex:0 0 30px;
+  text-align:right;
+  font-size:11.5px;
+  color:var(--text-faint);
+}
+.stat-row-value.is-text{
+  flex:0 0 56px;
+  text-transform:uppercase;
+  letter-spacing:0.03em;
+  font-size:10.5px;
+}
+.stat-row-value.is-text.lvl-low{ color:var(--text-faint); }
+.stat-row-value.is-text.lvl-brewing{ color:var(--warn); }
+.stat-row-value.is-text.lvl-intense{ color:var(--danger); }
+#stats-empty{ color:var(--text-faint); font-size:13px; padding:20px 0; text-align:center; }
+
+/* ============================================================
+   CHOICE LAYER
+   ============================================================ */
+#choice-layer{
+  position:absolute; inset:0;
+  z-index:40;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background:rgba(6,6,8,0.45);
+}
+#choice-layer.is-open{ display:flex; }
+#choice-list{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  width:min(560px,88vw);
+}
+.choice-btn{
+  text-align:left;
+  font-size:14.5px;
+  padding:14px 18px;
+  background:rgba(19,19,26,0.92);
+  border:1px solid var(--line);
+  border-radius:var(--ui-radius);
+  transition:border-color var(--ui-speed), background var(--ui-speed), transform var(--ui-speed);
+  opacity:0;
+  transform:translateY(8px);
+  animation:fadeIn 260ms ease forwards;
+}
+.choice-btn:hover{ border-color:var(--accent-dim); background:rgba(26,26,34,0.95); transform:translateX(3px); }
+
+/* ============================================================
+   LOADING / BOOT
+   ============================================================ */
+#boot-screen{
+  position:absolute; inset:0;
+  z-index:100;
+  background:var(--bg-black);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:16px;
+  transition:opacity 420ms ease;
+}
+#boot-screen.is-hidden{ opacity:0; pointer-events:none; }
+.boot-spinner{
+  width:26px; height:26px;
+  border:2px solid var(--line);
+  border-top-color:var(--accent);
+  border-radius:50%;
+  animation:spin 0.8s linear infinite;
+}
+@keyframes spin{ to{ transform:rotate(360deg); } }
+#boot-label{ font-size:12px; color:var(--text-faint); letter-spacing:0.08em; }
+
+/* click-to-advance hint layer (covers stage, sits below textbox) */
+#advance-hitbox{
+  position:absolute; inset:0;
+  z-index:9;
+  cursor:pointer;
+}
+
+/* responsive */
+@media (max-width:720px){
+  :root{ --vn-text-size:16.5px; }
+  #textbox{ padding:14px 18px 16px; }
+  .sprite{ max-width:60%; }
+  #top-bar{ gap:2px; padding:8px 8px; }
+  .ui-btn{ padding:6px 9px; font-size:10px; }
+}
+</style>
+</head>
+<body>
+
+<div id="vn-root">
+
+  <!-- BOOT -->
+  <div id="boot-screen">
+    <div class="boot-spinner"></div>
+    <div id="boot-label">loading assets…</div>
+  </div>
+
+  <!-- BACKGROUND -->
+  <div class="bg-layer" id="bg-a"></div>
+  <div class="bg-layer" id="bg-b"></div>
+
+  <!-- SPRITES -->
+  <div id="sprite-layer"></div>
+
+  <!-- WEATHER (rain, etc.) -->
+  <div id="weather-layer"></div>
+
+  <!-- ADVANCE CLICK CATCHER -->
+  <div id="advance-hitbox"></div>
+
+  <!-- TOP UI -->
+  <div id="top-bar">
+    <button class="ui-btn" id="btn-auto" title="Auto-advance">AUTO</button>
+    <button class="ui-btn" id="btn-skip" title="Skip (hold)">SKIP</button>
+    <button class="ui-btn" id="btn-log" title="Backlog">LOG</button>
+    <button class="ui-btn" id="btn-stats" title="Stats (T)">STATS</button>
+    <button class="ui-btn" id="btn-save" title="Save">SAVE</button>
+    <button class="ui-btn" id="btn-load" title="Load">LOAD</button>
+    <button class="ui-btn" id="btn-settings" title="Settings">SETTINGS</button>
+  </div>
+
+  <!-- TEXTBOX -->
+  <div id="textbox-wrap">
+    <div id="textbox">
+      <div id="speaker-name"></div>
+      <div id="dialogue-text"></div>
+    </div>
+    <div id="continue-indicator"></div>
+  </div>
+
+  <!-- CHOICES -->
+  <div id="choice-layer">
+    <div id="choice-list"></div>
+  </div>
+
+  <!-- SETTINGS PANEL -->
+  <div class="panel-overlay" id="overlay-settings">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Settings</div>
+        <button class="panel-close" data-close="overlay-settings">×</button>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Furigana</div>
+          <div class="setting-sub">Show reading hints over kanji</div>
+        </div>
+        <div class="setting-control">
+          <div class="toggle is-on" id="toggle-furigana"></div>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Text Speed</div>
+          <div class="setting-sub">Typewriter reveal speed</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-textspeed" min="1" max="100" value="60">
+          <span class="slider-val" id="val-textspeed">60</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Auto-Advance Delay</div>
+          <div class="setting-sub">Wait time per line in Auto mode</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-autospeed" min="5" max="100" value="40">
+          <span class="slider-val" id="val-autospeed">40</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Master Volume</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-vol-master" min="0" max="100" value="80">
+          <span class="slider-val" id="val-vol-master">80</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Music (BGM)</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-vol-bgm" min="0" max="100" value="70">
+          <span class="slider-val" id="val-vol-bgm">70</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Sound Effects</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-vol-sfx" min="0" max="100" value="85">
+          <span class="slider-val" id="val-vol-sfx">85</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Ambiance</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-vol-ambiance" min="0" max="100" value="70">
+          <span class="slider-val" id="val-vol-ambiance">70</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Voice</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-vol-voice" min="0" max="100" value="100">
+          <span class="slider-val" id="val-vol-voice">100</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Text Box Opacity</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-textbox-opacity" min="20" max="100" value="86">
+          <span class="slider-val" id="val-textbox-opacity">86</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Text Size</div>
+        </div>
+        <div class="setting-control">
+          <input type="range" id="slider-textsize" min="14" max="28" value="19">
+          <span class="slider-val" id="val-textsize">19</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Screen Shake</div>
+          <div class="setting-sub">Disable for motion sensitivity</div>
+        </div>
+        <div class="setting-control">
+          <div class="toggle is-on" id="toggle-screenshake"></div>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Text Effects</div>
+          <div class="setting-sub">Per-character shake / wave</div>
+        </div>
+        <div class="setting-control">
+          <div class="toggle is-on" id="toggle-textfx"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOG PANEL -->
+  <div class="panel-overlay" id="overlay-log">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Backlog</div>
+        <button class="panel-close" data-close="overlay-log">×</button>
+      </div>
+      <div id="log-list"></div>
+    </div>
+  </div>
+
+  <!-- STATS PANEL -->
+  <div class="panel-overlay" id="overlay-stats">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Stats</div>
+        <button class="panel-close" data-close="overlay-stats">×</button>
+      </div>
+      <div id="stats-list"></div>
+    </div>
+  </div>
+
+
+  <!-- SAVE/LOAD PANEL -->
+  <div class="panel-overlay" id="overlay-saveload">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title" id="saveload-title">Save</div>
+        <button class="panel-close" data-close="overlay-saveload">×</button>
+      </div>
+      <div id="saveload-list"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   ====================  CONFIGURATION  ========================
+   ============================================================
+   Edit R2_BASE_URL to your bucket's public URL, then flip
+   USE_EMOJI_PLACEHOLDERS to false once real assets are in place.
+   Everything else (sprite paths, bgm paths, etc.) is built from
+   ASSET_MANIFEST below using this base + the folder convention
+   documented next to it.
+*/
+const CONFIG = {
+  // ---- LIVE R2 BUCKET ----
+  // Public R2.dev URL, pointed at the vn/pure_grok asset root.
+  // (neuroverse.uk is a custom domain mirror of the same bucket —
+  // swap to that if you'd rather serve from your own domain.)
+  R2_BASE_URL: "https://pub-aa6bdcd20c8a4f75bf3984b6b5f04a96.r2.dev/vn/pure_grok",
+
+  // When true, the engine ignores all image/audio URLs and renders
+  // emoji + silence instead. Real assets are wired in below, so this
+  // is off — flip back to true any time to test script structure
+  // without hitting the network.
+  USE_EMOJI_PLACEHOLDERS: false,
+
+  // Folder convention under R2_BASE_URL (matches the actual bucket
+  // layout under vn/pure_grok/):
+  //   /image/bg/<file>.png
+  //   /image/sprites/<folder>/<file>.png   (full relative path incl. subfolders, see manifest)
+  //   /audio/bgm/<file>.ogg
+  //   /audio/transitions/<file>.ogg   (used as one-shot "sfx"-style stingers)
+  //   /audio/sfx/environment/<file>.wav   (looping ambiance beds -> ASSET_MANIFEST.ambiance)
+  //   /audio/sfx/other/<file>.wav         (one-shot foley -> ASSET_MANIFEST.environment)
+  //   /voice/<character>/<line_id>.mp3   (not yet populated — no voice files in bucket)
+  PATHS: {
+    bg: "image/bg",
+    sprites: "image/sprites",
+    bgm: "audio/bgm",
+    sfx: "audio/transitions",
+    ambiance: "audio/sfx/environment",
+    environment: "audio/sfx/other",
+    voice: "voice"
+  },
+
+  TEXT_SPEED_DEFAULT: 60,     // 1-100, higher = faster typewriter
+  AUTO_DELAY_DEFAULT: 40,     // 1-100, higher = shorter wait
+  SAVE_SLOT_COUNT: 9,
+  STORAGE_PREFIX: "vnengine_",
+};
+
+/* ============================================================
+   ====================  ASSET MANIFEST  =======================
+   ============================================================
+   Central registry of every logical asset name used by the
+   script. Engine code never hardcodes a filename — it always
+   looks up a key here. To add/swap real R2 assets, edit the
+   strings below (relative to CONFIG.PATHS); nothing else in
+   the engine needs to change.
+
+   emoji: fallback glyph used while USE_EMOJI_PLACEHOLDERS=true
+   file:  filename/relative-path (without base path) for real assets
+
+   ---- SPRITE EXPRESSION KEYS ----
+   Each character's source art uses different raw naming
+   (eyes open/closed, mouth shape, blush on/off). Rather than
+   exposing that mess to the script, every character below is
+   normalized to the SAME semantic key set:
+     neutral, happy, happy_blush, sad, sad_blush,
+     shy, shy_blush, surprised, surprised_blush
+   (+ "shout"/"shout_blush" only for characters who have a
+   shout pose — currently Ichiko). Closed-eyes variants are
+   folded into "shy"/"happy_closed" style use at your
+   discretion — pick whichever filename best fits a given
+   semantic key per character; you don't have to use every
+   raw file, and you can always add more keys later.
+*/
+const ASSET_MANIFEST = {
+  backgrounds: {
+    apartment_exterior:        { emoji:"🏢", file:"Apartment_Exterior.png" },
+    apartment_exterior_night:  { emoji:"🌃", file:"Apartment_Exterior_Night.png" },
+
+    backstreet_spring_afternoon:   { emoji:"🌸", file:"Backstreet_Spring_Afternoon.png" },
+    backstreet_spring_cloudy:      { emoji:"☁️", file:"Backstreet_Spring_Cloudy.png" },
+    backstreet_spring_day:         { emoji:"🌸", file:"Backstreet_Spring_Day.png" },
+    backstreet_spring_night:       { emoji:"🌙", file:"Backstreet_Spring_Night.png" },
+    backstreet_spring_night_rain:  { emoji:"🌧️", file:"Backstreet_Spring_Night_Rain.png" },
+    backstreet_spring_rain:        { emoji:"🌧️", file:"Backstreet_Spring_Rain.png" },
+    backstreet_summer_afternoon:   { emoji:"☀️", file:"Backstreet_Summer_Afternoon.png" },
+    backstreet_summer_cloudy:      { emoji:"☁️", file:"Backstreet_Summer_Cloudy.png" },
+    backstreet_summer_day:         { emoji:"☀️", file:"Backstreet_Summer_Day.png" },
+    backstreet_summer_night:       { emoji:"🌙", file:"Backstreet_Summer_Night.png" },
+    backstreet_summer_night_rain:  { emoji:"🌧️", file:"Backstreet_Summer_Night_Rain.png" },
+    backstreet_summer_rain:        { emoji:"🌧️", file:"Backstreet_Summer_Rain.png" },
+
+    bathroom:        { emoji:"🛁", file:"Bathroom.png" },
+    bathroom_foggy:  { emoji:"♨️", file:"Bathroom_Foggy.png" },
+
+    bedroom_day:        { emoji:"🛏️", file:"Bedroom_Day.png" },
+    bedroom_evening:    { emoji:"🌆", file:"Bedroom_Evening.png" },
+    bedroom_night:      { emoji:"🌙", file:"Bedroom_Night.png" },
+    bedroom_night_dark: { emoji:"🌑", file:"Bedroom_Night_Dark.png" },
+
+    busstop_spring_afternoon:   { emoji:"🚏", file:"BusStop_Spring_Afternoon.png" },
+    busstop_spring_cloudy:      { emoji:"☁️", file:"BusStop_Spring_Cloudy.png" },
+    busstop_spring_day:         { emoji:"🚏", file:"BusStop_Spring_Day.png" },
+    busstop_spring_night:       { emoji:"🌙", file:"BusStop_Spring_Night.png" },
+    busstop_spring_night_rain:  { emoji:"🌧️", file:"BusStop_Spring_Night_Rain.png" },
+    busstop_spring_rain:        { emoji:"🌧️", file:"BusStop_Spring_Rain.png" },
+    busstop_summer_afternoon:   { emoji:"🚏", file:"BusStop_Summer_Afternoon.png" },
+    busstop_summer_cloudy:      { emoji:"☁️", file:"BusStop_Summer_Cloudy.png" },
+    busstop_summer_day:         { emoji:"🚏", file:"BusStop_Summer_Day.png" },
+    busstop_summer_night:       { emoji:"🌙", file:"BusStop_Summer_Night.png" },
+    busstop_summer_night_rain:  { emoji:"🌧️", file:"BusStop_Summer_Night_Rain.png" },
+    busstop_summer_rain:        { emoji:"🌧️", file:"BusStop_Summer_Rain.png" },
+
+    cafeteria_day: { emoji:"🍽️", file:"Cafeteria_Day.png" },
+
+    city_afternoon: { emoji:"🏙️", file:"City_Afternoon.png" },
+    city_morning:   { emoji:"🌅", file:"City_Morning.png" },
+    city_night:     { emoji:"🌃", file:"City_Night.png" },
+    city_raining:   { emoji:"🌧️", file:"City_Raining.png" },
+
+    classroom_day: { emoji:"🏫", file:"Classroom_Day.png" },
+
+    futon_room:       { emoji:"🛏️", file:"Futon_Room.png" },
+    futon_room_night: { emoji:"🌙", file:"Futon_Room_Night.png" },
+
+    kitchen_day:   { emoji:"🍳", file:"Kitchen_Day.png" },
+    kitchen_night: { emoji:"🌙", file:"Kitchen_Night.png" },
+
+    laundromat: { emoji:"🧺", file:"Laundromat.png" },
+
+    livingroom_dark: { emoji:"🌑", file:"Livingroom_Dark.png" },
+    livingroom_day:  { emoji:"🛋️", file:"Livingroom_Day.png" },
+    livingroom_night:{ emoji:"🌙", file:"Livingroom_Night.png" },
+
+    onsen_building:       { emoji:"♨️", file:"Onsen_Building.png" },
+    onsen_building_night: { emoji:"🌙", file:"Onsen_Building_Night.png" },
+
+    outdoor_stairs: { emoji:"🪜", file:"Outdoor_Stairs.png" },
+
+    restaurant_a: { emoji:"🍜", file:"Restaurant_A.png" },
+    restaurant_b: { emoji:"🍴", file:"Restaurant_B.png" },
+
+    school_hallway_day: { emoji:"🏫", file:"School_Hallway_Day.png" },
+
+    sitting_room:      { emoji:"🛋️", file:"Sitting_Room.png" },
+    sitting_room_dark: { emoji:"🌑", file:"Sitting_Room_Dark.png" },
+
+    small_apartment_kitchen:       { emoji:"🍳", file:"Small_Apartment_Kitchen.png" },
+    small_apartment_kitchen_night: { emoji:"🌙", file:"Small_Apartment_Kitchen_Night.png" },
+
+    street_autumn_day:     { emoji:"🍁", file:"Street_Autumn_Day.png" },
+    street_autumn_evening: { emoji:"🌇", file:"Street_Autumn_Evening.png" },
+    street_autumn_night:   { emoji:"🌙", file:"Street_Autumn_Night.png" },
+    street_spring_day:     { emoji:"🌸", file:"Street_Spring_Day.png" },
+    street_spring_evening: { emoji:"🌇", file:"Street_Spring_Evening.png" },
+    street_spring_night:   { emoji:"🌙", file:"Street_Spring_Night.png" },
+    street_spring_rain:    { emoji:"🌧️", file:"Street_Spring_Rain.png" },
+    street_summer_day:     { emoji:"☀️", file:"Street_Summer_Day.png" },
+    street_summer_evening: { emoji:"🌇", file:"Street_Summer_Evening.png" },
+    street_summer_night:   { emoji:"🌙", file:"Street_Summer_Night.png" },
+    street_summer_rain:    { emoji:"🌧️", file:"Street_Summer_Rain.png" },
+    street_summer_stars:   { emoji:"✨", file:"Street_Summer_Stars.png" },
+
+    temple_spring_afternoon: { emoji:"⛩️", file:"Temple_Spring_Afternoon.png" },
+    temple_spring_clouds:    { emoji:"☁️", file:"Temple_Spring_Clouds.png" },
+    temple_spring_day:       { emoji:"⛩️", file:"Temple_Spring_Day.png" },
+    temple_spring_night:     { emoji:"🌙", file:"Temple_Spring_Night.png" },
+    temple_spring_rain:      { emoji:"🌧️", file:"Temple_Spring_Rain.png" },
+    temple_summer_afternoon: { emoji:"⛩️", file:"Temple_Summer_Afternoon.png" },
+    temple_summer_clouds:    { emoji:"☁️", file:"Temple_Summer_Clouds.png" },
+    temple_summer_day:       { emoji:"⛩️", file:"Temple_Summer_Day.png" },
+    temple_summer_night:     { emoji:"🌙", file:"Temple_Summer_Night.png" },
+    temple_summer_night_clouds: { emoji:"☁️", file:"Temple_Summer_Night_Clouds.png" },
+    temple_summer_night_rain:   { emoji:"🌧️", file:"Temple_Summer_Night_Rain.png" },
+    temple_summer_rain:      { emoji:"🌧️", file:"Temple_Summer_Rain.png" },
+
+    train_day:        { emoji:"🚃", file:"Train_Day.png" },
+    train_day_rain:   { emoji:"🌧️", file:"Train_Day_Rain.png" },
+    train_evening:    { emoji:"🌇", file:"Train_Evening.png" },
+    train_night:      { emoji:"🌙", file:"Train_Night.png" },
+    train_night_rain: { emoji:"🌧️", file:"Train_Night_Rain.png" },
+    train_transparent:{ emoji:"🚃", file:"Train_Transparent.png" },
+    train_tunnel:     { emoji:"🚇", file:"Train_Tunnel.png" },
+    train_beach:      { emoji:"🏖️", file:"Train_beach.png" },
+  },
+
+  /* ---- SPRITES ----
+     Top-level key = "<Character>_<Outfit>" so outfit changes are
+     just a different `show` character key (e.g. "aiko_casual" vs
+     "aiko_blazer"). Every outfit exposes the same normalized
+     expression keys; pick whichever raw file fits best per slot.
+  */
+  sprites: {
+    // ---------------- AIKO ----------------
+    aiko_blazer: {
+      neutral:          { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Closed_Frown.png" },
+      happy:            { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Smile.png" },
+      happy_blush:      { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Smile_Blush.png" },
+      happy_closed:     { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Closed_Smile.png" },
+      sad:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Frown.png" },
+      sad_blush:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Frown_Blush.png" },
+      shy:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Closed_Smile_Blush.png" },
+      surprised:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Open.png" },
+      surprised_blush:  { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Blazer Uniform/Aiko_Blazer_Open_Blush.png" },
+    },
+    aiko_casual: {
+      neutral:          { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Closed_Frown.png" },
+      happy:            { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Smile.png" },
+      happy_blush:      { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Smile_Blush.png" },
+      happy_closed:     { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Closed_Smile.png" },
+      sad:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Frown.png" },
+      sad_blush:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Frown_Blush.png" },
+      shy:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Closed_Smile_Blush.png" },
+      surprised:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Open.png" },
+      surprised_blush:  { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Casual/Aiko_Casual_Open_Blush.png" },
+    },
+    aiko_summer: {
+      neutral:          { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Closed_Frown.png" },
+      happy:            { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Smile.png" },
+      happy_blush:      { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Smile_Blush.png" },
+      happy_closed:     { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Closed_Smile.png" },
+      sad:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Frown.png" },
+      sad_blush:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Frown_Blush.png" },
+      shy:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Closed_Smile_Blush.png" },
+      surprised:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Open.png" },
+      surprised_blush:  { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Summer Uniform/Aiko_SummerSera_Open_Blush.png" },
+    },
+    aiko_winter: {
+      neutral:          { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Closed_Frown.png" },
+      happy:            { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Smile.png" },
+      happy_blush:      { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Smile_Blush.png" },
+      happy_closed:     { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Closed_Smile.png" },
+      sad:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Frown.png" },
+      sad_blush:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Frown_Blush.png" },
+      shy:              { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Closed_Smile_Blush.png" },
+      surprised:        { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Open.png" },
+      surprised_blush:  { file:"Aiko_NoranekoGames/Aiko_NoranekoGames/Winter Uniform/Aiko_WinterSera_Open_Blush.png" },
+    },
+
+    // ---------------- MIKI ----------------
+    miki_blazer: {
+      neutral:          { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Smile_ClosedEyes.png" },
+      happy:            { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Smile.png" },
+      happy_blush:      { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Smile_Blush.png" },
+      happy_closed:     { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Smile_ClosedEyes_Blush.png" },
+      sad:              { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Frown.png" },
+      sad_blush:        { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Frown_Blush.png" },
+      shy:              { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_Frown_ClosedEyes_Blush.png" },
+      surprised:        { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_OpenSmile.png" },
+      surprised_blush:  { file:"MikiNewstyle/MikiNewstyle/Miki/Blazer Uni/Miki_Seifuku_OpenSmile_Blush.png" },
+    },
+    miki_casual: {
+      neutral:          { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Smile_ClosedEyes.png" },
+      happy:            { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Smile.png" },
+      happy_blush:      { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Smile_Blush.png" },
+      happy_closed:     { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Smile_ClosedEyes_Blush.png" },
+      sad:              { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Frown.png" },
+      sad_blush:        { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Frown_Blush.png" },
+      shy:              { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_Frown_ClosedEyes_Blush.png" },
+      surprised:        { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_OpenSmile.png" },
+      surprised_blush:  { file:"MikiNewstyle/MikiNewstyle/Miki/Casual/Miki_Casual_OpenSmile_Blush.png" },
+    },
+    miki_summer: {
+      neutral:          { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Smile_ClosedEyes.png" },
+      happy:            { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Smile.png" },
+      happy_blush:      { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Smile_Blush.png" },
+      happy_closed:     { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Smile_ClosedEyes_Blush.png" },
+      sad:              { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Frown.png" },
+      sad_blush:        { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Frown_Blush.png" },
+      shy:              { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_Frown_ClosedEyes_Blush.png" },
+      surprised:        { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_OpenSmile.png" },
+      surprised_blush:  { file:"MikiNewstyle/MikiNewstyle/Miki/Summer Uni/Miki_Summer_Uni_OpenSmile_Blush.png" },
+    },
+
+    // ---------------- ICHIKO ----------------
+    ichiko_casual: {
+      neutral:          { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Closed_Frown.png" },
+      happy:            { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Smile.png" },
+      happy_blush:      { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Smile_Blush.png" },
+      happy_closed:     { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Closed_Smile.png" },
+      sad:              { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Frown.png" },
+      sad_blush:        { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Frown_Blush.png" },
+      shy:              { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Closed_Pout_Blush.png" },
+      pout:             { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Pout.png" },
+      pout_blush:       { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Pout_Blush.png" },
+      shout:            { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Shout.png" },
+      shout_blush:      { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Shout_Blush.png" },
+      surprised:        { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Closed_Shout.png" },
+      surprised_blush:  { file:"Ichiko Casual/Ichiko Casual/Ichiko_Casual_Closed_Shout_Blush.png" },
+    },
+
+    // ---------------- NORA ----------------
+    nora_casual: {
+      neutral:          { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Closed_Frown.png" },
+      happy:            { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Smile.png" },
+      happy_blush:      { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Smile_Blush.png" },
+      happy_closed:     { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Closed_Smile.png" },
+      sad:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Frown.png" },
+      sad_blush:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Frown_Blush.png" },
+      shy:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Closed_Smile_Blush.png" },
+      surprised:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Open.png" },
+      surprised_blush:  { file:"Nora_NoranekoGames/Nora_NoranekoGames/Casual/Nora_Casual_Open_Blush.png" },
+    },
+    nora_summer: {
+      neutral:          { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Closed_Frown.png" },
+      happy:            { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Smile.png" },
+      happy_blush:      { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Smile_Blush.png" },
+      happy_closed:     { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Closed_Smile.png" },
+      sad:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Frown.png" },
+      sad_blush:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Frown_Blush.png" },
+      shy:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Closed_Smile_Blush.png" },
+      surprised:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Open.png" },
+      surprised_blush:  { file:"Nora_NoranekoGames/Nora_NoranekoGames/Summer Uniform/Nora_SummerUni_Open_Blush.png" },
+    },
+    nora_winter: {
+      // NOTE: source pack has no Nora_WinterUni_Open_Blush.png — falls
+      // back to the non-blush "surprised" pose for that one slot.
+      neutral:          { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Closed_Frown.png" },
+      happy:            { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Smile.png" },
+      happy_blush:      { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Smile_Blush.png" },
+      happy_closed:     { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Closed_Smile.png" },
+      sad:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Frown.png" },
+      sad_blush:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Frown_Blush.png" },
+      shy:              { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Closed_Smile_Blush.png" },
+      surprised:        { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Open.png" },
+      surprised_blush:  { file:"Nora_NoranekoGames/Nora_NoranekoGames/Winter Uniform/Nora_WinterUni_Open.png" },
+    },
+
+    // ---------------- RIN ----------------
+    rin_casual: {
+      neutral:          { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Frown_EyesClosed.png" },
+      happy:            { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Smile.png" },
+      happy_blush:      { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Smile_Blush.png" },
+      happy_closed:     { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Smile_EyesClosed.png" },
+      sad:              { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Frown.png" },
+      sad_blush:        { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Frown_Blush.png" },
+      shy:              { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_Smile_EyesClosed_Blush.png" },
+      surprised:        { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_OpenSmile.png" },
+      surprised_blush:  { file:"Rin_NoranekoGames/Rin/Casual/Rin_Casual_OpenSmile_Blush.png" },
+    },
+    rin_summer: {
+      neutral:          { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Frown_ClosedEyes.png" },
+      happy:            { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Smile.png" },
+      happy_blush:      { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Smile_Blush.png" },
+      happy_closed:     { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Smile_ClosedEyes.png" },
+      sad:              { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Frown.png" },
+      sad_blush:        { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Frown_Blush.png" },
+      shy:              { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_Smile_ClosedEyes_Blush.png" },
+      surprised:        { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_OpenSmile.png" },
+      surprised_blush:  { file:"Rin_NoranekoGames/Rin/Summer_Uniform/Rin_SummerUni_OpenSmile_Blush.png" },
+    },
+    rin_winter: {
+      // NOTE: source pack has no plain Rin_WinterUni_Smile_Blush.png — the
+      // only file in that slot is (likely a pack-naming typo) "Smile_Frown.png",
+      // which is used here as the closest available happy_blush pose.
+      neutral:          { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Frown_EyesClosed.png" },
+      happy:            { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Smile.png" },
+      happy_blush:      { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Smile_Frown.png" },
+      happy_closed:     { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Smile_EyesClosed.png" },
+      sad:              { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Frown.png" },
+      sad_blush:        { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Frown_Blush.png" },
+      shy:              { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_Smile_EyesClosed_Blush.png" },
+      surprised:        { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_OpenSmile.png" },
+      surprised_blush:  { file:"Rin_NoranekoGames/Rin/Winter_Uniform/Rin_WinterUni_OpenSmile_Blush.png" },
+    },
+
+    // ---------------- SUMI ----------------
+    sumi_winter_coat: {
+      neutral:          { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_EyesClosed_Frown.png" },
+      happy:            { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Smile.png" },
+      happy_blush:      { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Smile_Blush.png" },
+      happy_closed:     { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_EyesClosed_Smile.png" },
+      sad:              { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Frown.png" },
+      sad_blush:        { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Frown_Blush.png" },
+      shy:              { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_EyesClosed_Smile_Blush.png" },
+      surprised:        { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Open.png" },
+      surprised_blush:  { file:"Sumi Winter Coat Uniform/Sumi Winter Coat Uniform/Sumi_WinterUni_Open_Blush.png" },
+    },
+    sumi_pose_b: {
+      neutral:          { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_EyesClosed_Frown.png" },
+      happy:            { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Smile.png" },
+      happy_blush:      { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Smile_Blush.png" },
+      happy_closed:     { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_EyesClosed_Smile.png" },
+      sad:              { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Frown.png" },
+      sad_blush:        { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Frown_Blush.png" },
+      shy:              { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_EyesClosed_Smile_Blush.png" },
+      surprised:        { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Open.png" },
+      surprised_blush:  { file:"Sumi Winter Uni Pose B/Pose B/Sumi_PoseB_WinterUni_Open_Blush.png" },
+    },
+  },
+
+  /* ---- BGM ---- (audio/bgm/*.ogg) */
+  bgm: {
+    death:           { file:"Death.ogg" },
+    doll_dance:      { file:"Doll Dance.ogg" },
+    evans:           { file:"Evans.ogg" },
+    evans_full:      { file:"Evans Full.ogg" },
+    fight_on_intro:  { file:"Fight On Intro.ogg" },
+    for_everyone_intro: { file:"For Everyone Intro.ogg" },
+    in_legends:      { file:"In Legends.ogg" },
+    letting_go_intro:{ file:"Letting Go Intro.ogg" },
+    letting_go_main: { file:"Letting Go Main.ogg" },
+    lurking:         { file:"Lurking.ogg" },
+    magical_intro:   { file:"Magical Intro.ogg" },
+    magical_main:    { file:"Magical Main.ogg" },
+    magical_full:    { file:"Magical Full.ogg" },
+    relax:           { file:"Relax.ogg" },
+    shenanigans:     { file:"Shenanigans!.ogg" },
+    splatters:       { file:"Splatters.ogg" },
+    time_for_rest:   { file:"Time for Rest.ogg" },
+  },
+
+  /* ---- SFX / TRANSITIONS ---- (audio/transitions/*.ogg — short
+     stingers used for scene-change/emphasis cues. Unchanged from
+     the original engine — still played via playSfx(key) /
+     { type:"sfx", key:... }.) */
+  sfx: {
+    piano_jingle_1: { emoji:"🎵", file:"Piano Jingle 1.ogg" },
+    piano_jingle_2: { emoji:"🎵", file:"Piano Jingle 2.ogg" },
+    piano_jingle_3: { emoji:"🎵", file:"Piano Jingle 3.ogg" },
+    piano_jingle_4: { emoji:"🎵", file:"Piano Jingle 4.ogg" },
+    piano_jingle_5: { emoji:"🎵", file:"Piano Jingle 5.ogg" },
+    piano_jingle_6: { emoji:"🎵", file:"Piano Jingle 6.ogg" },
+    transition_3:   { emoji:"🔔", file:"Transition 3.ogg" },
+    transition_4:   { emoji:"🔔", file:"Transition 4.ogg" },
+    transition_5:   { emoji:"🔔", file:"Transition 5.ogg" },
+    transition_6:   { emoji:"🔔", file:"Transition 6.ogg" },
+  },
+
+  /* ---- AMBIANCE ---- (R2 bucket: audio/sfx/environment/ — long
+     looping atmosphere beds, e.g. rain/wind. Separate channel from
+     SFX/transitions: loops, has its own volume bucket (volAmbiance),
+     and crossfades like BGM rather than firing as a one-shot.
+     Played via Audio_.playAmbiance(key) / { type:"ambiance", key:... }. */
+  ambiance: {
+    rain_leaves: { emoji:"🌧️", file:"Ambiance_Nature_Rain_Calm_Leaves_Loop_Stereo.wav" },
+    wind:        { emoji:"🍃", file:"ambient_wind.wav" },
+  },
+
+  /* ---- ENVIRONMENT ---- (R2 bucket: audio/sfx/other/ — one-shot
+     foley: doors, locks, paper, footsteps-on-X, props, impacts.
+     Plays through its own pool, same one-shot behavior as SFX but
+     kept as a separate manifest/category/volume bucket so it's never
+     confused with transition stingers. Played via
+     Audio_.playEnvironment(key) / { type:"environment", key:... }. */
+  environment: {
+    door_key_insert:     { emoji:"🔑", file:"Household_Closet_Key_Insertion_Stereo.wav" },
+    door_wood_open:      { emoji:"🚪", file:"Household_Door_Wood_Open_Stereo.wav" },
+    can_pickup:          { emoji:"🥫", file:"aluminium_can_pick_up.wav" },
+    can_place:           { emoji:"🥫", file:"aluminium_can_place.wav" },
+    bamboo_drop:         { emoji:"🎋", file:"bamboo_drop.wav" },
+    box_close:           { emoji:"📦", file:"cardboard_box_close.wav" },
+    box_drop:            { emoji:"📦", file:"cardboard_drop.wav" },
+    box_hit:             { emoji:"📦", file:"cardboard_hit.wav" },
+    box_pickup:          { emoji:"📦", file:"cardboard_pick_up.wav" },
+    box_push:            { emoji:"📦", file:"cardboard_push.wav" },
+    cardboard_tear:      { emoji:"📦", file:"cardboard_tear.wav" },
+    jar_close:           { emoji:"🏺", file:"ceramic_jar_close.wav" },
+    jar_open:            { emoji:"🏺", file:"ceramic_jar_open.wav" },
+    clock_tick:          { emoji:"🕐", file:"clock_tick_only.wav" },
+    clock_ticking_loop:  { emoji:"🕐", file:"clock_ticking.wav" },
+    clock_tock:          { emoji:"🕐", file:"clock_tock_only.wav" },
+    clothing_rustle_1:   { emoji:"👕", file:"clothing_1.wav" },
+    clothing_rustle_2:   { emoji:"👕", file:"clothing_2.wav" },
+    clothing_thud:       { emoji:"👕", file:"clothing_thud.wav" },
+    concrete_scrape:     { emoji:"🧱", file:"concrete_scrape.wav" },
+    cork_stab:           { emoji:"🍾", file:"cork_stabbed.wav" },
+    glass_ping_big:      { emoji:"🥂", file:"glass_ping_big.wav" },
+    glass_ping_small:    { emoji:"🥂", file:"glass_ping_small.wav" },
+    kick:                { emoji:"🦵", file:"kick.wav" },
+    lock_lock:           { emoji:"🔒", file:"lock_lock.wav" },
+    lock_quick:          { emoji:"🔒", file:"lock_quick.wav" },
+    lock_unlock:         { emoji:"🔓", file:"lock_unlock.wav" },
+    metal_tap:           { emoji:"🔧", file:"metal_blunt_tap.wav" },
+    metal_clang:         { emoji:"🔧", file:"metal_clang.wav" },
+    paper_move:          { emoji:"📄", file:"paper_move.wav" },
+    paper_scrunch:       { emoji:"📄", file:"paper_scrunch.wav" },
+    paper_sort:          { emoji:"📄", file:"paper_sort.wav" },
+    paper_tear_1:        { emoji:"📄", file:"paper_tear_1.wav" },
+    paper_tear_2:        { emoji:"📄", file:"paper_tear_2.wav" },
+    pottery_clang:       { emoji:"🏺", file:"pottery_clang.wav" },
+    punch:               { emoji:"👊", file:"punch.wav" },
+    punch_2:             { emoji:"👊", file:"punch_2.wav" },
+    punch_3:             { emoji:"👊", file:"punch_3.wav" },
+    stone_push_long:     { emoji:"🪨", file:"stone_push_long.wav" },
+    stone_push_medium:   { emoji:"🪨", file:"stone_push_medium.wav" },
+    stone_push_short:    { emoji:"🪨", file:"stone_push_short.wav" },
+    wood_drop:           { emoji:"🪵", file:"wood_small_drop.wav" },
+    wood_gather:         { emoji:"🪵", file:"wood_small_gather.wav" },
+    wood_hollow:         { emoji:"🪵", file:"wood_small_hollow.wav" },
+    wood_pickup:         { emoji:"🪵", file:"wood_small_pickup.wav" },
+  },
+
+  voice: {
+    // voice[character][line_id] — no voice files in the bucket yet.
+    aiko_blazer: {}, aiko_casual: {}, aiko_summer: {}, aiko_winter: {},
+    miki_blazer: {}, miki_casual: {}, miki_summer: {},
+    ichiko_casual: {},
+    nora_casual: {}, nora_summer: {}, nora_winter: {},
+    rin_casual: {}, rin_summer: {}, rin_winter: {},
+    sumi_winter_coat: {}, sumi_pose_b: {}
+  }
+};
+
+/* ============================================================
+   ====================  CHARACTERS REGISTRY  ===================
+   ============================================================
+   Sprite keys in ASSET_MANIFEST are per-OUTFIT (aiko_casual,
+   aiko_blazer, ...). Stats need to track per-PERSON, since an
+   outfit change shouldn't reset affection. This registry maps
+   each person id -> display name + their outfit keys, and is
+   the single source of truth the stats system, stats panel,
+   and {{tag}} substitution all read from.
+
+   rivals: true means this character is part of the jealousy
+   pool — favoring one (raising their affection) raises jealousy
+   in every other rival when applyStatDelta() runs. Leave a
+   character out of rivals (or set rivals:false) for a love
+   interest you want exempt (e.g. a sibling/best-friend role).
+*/
+const CHARACTERS = {
+  aiko:  { name:"Aiko",  outfits:["aiko_casual","aiko_blazer","aiko_summer","aiko_winter"], rivals:true },
+  miki:  { name:"Miki",  outfits:["miki_casual","miki_blazer","miki_summer"], rivals:true },
+  ichiko:{ name:"Ichiko",outfits:["ichiko_casual"], rivals:true },
+  nora:  { name:"Nora",  outfits:["nora_casual","nora_summer","nora_winter"], rivals:true },
+  rin:   { name:"Rin",   outfits:["rin_casual","rin_summer","rin_winter"], rivals:true },
+  sumi:  { name:"Sumi",  outfits:["sumi_winter_coat","sumi_pose_b"], rivals:true },
+};
+
+/** outfit sprite key ("aiko_casual") -> person id ("aiko").
+ *  Built once from CHARACTERS so script steps can keep using
+ *  outfit keys for `show`/`expression` while stats stay keyed
+ *  to the person underneath. */
+const OUTFIT_TO_PERSON = {};
+Object.entries(CHARACTERS).forEach(([personId, info])=>{
+  info.outfits.forEach(outfitKey=>{ OUTFIT_TO_PERSON[outfitKey] = personId; });
+});
+
+function personIdFor(outfitOrPersonKey){
+  if(CHARACTERS[outfitOrPersonKey]) return outfitOrPersonKey;
+  return OUTFIT_TO_PERSON[outfitOrPersonKey] || outfitOrPersonKey;
+}
+
+/* ============================================================
+   ====================  STATS CONFIG  ===========================
+   ============================================================ */
+const STAT_KEYS = ["affection","trust","intimacy","jealousy"];
+const STAT_DEFAULTS = { affection:0, trust:0, intimacy:0, jealousy:0 };
+const STAT_MAX = 100;
+const STAT_MIN = 0;
+
+const STATS_CONFIG = {
+  // How much an affection gain on one rival raises jealousy in
+  // every OTHER rival, as a fraction of the gain (0.4 = 40%).
+  jealousySpilloverRatio: 0.4,
+  // Diminishing returns on chapter replay: multiplier applied to
+  // every stat gain tagged with a chapterId, based on how many
+  // times that chapter has already been completed this session+save.
+  // index 0 = first time through (full gains), then tapers off.
+  chapterReplayMultipliers: [1, 0.6, 0.35, 0.15, 0],
+};
+
+/** Returns the live stats object for a person, creating it
+ *  (filled with STAT_DEFAULTS) on first access. Accepts either
+ *  a person id ("aiko") or an outfit key ("aiko_casual"). */
+function getStats(personOrOutfitKey){
+  const id = personIdFor(personOrOutfitKey);
+  if(!state.stats[id]) state.stats[id] = { ...STAT_DEFAULTS };
+  return state.stats[id];
+}
+
+function clampStat(v){ return Math.max(STAT_MIN, Math.min(STAT_MAX, v)); }
+
+// Jealousy is deliberately shown as a qualitative read rather than
+// a bare number — the player should feel the temperature rising
+// without being able to min/max against an exact threshold.
+// Thresholds are fractions of STAT_MAX (0-100 by default).
+const JEALOUSY_DISPLAY_THRESHOLDS = [
+  { max: 0.33, label: "low",     cls: "lvl-low" },
+  { max: 0.70, label: "brewing", cls: "lvl-brewing" },
+  { max: Infinity, label: "intense", cls: "lvl-intense" }
+];
+function jealousyDisplayFor(value){
+  const frac = clampStat(value) / STAT_MAX;
+  return JEALOUSY_DISPLAY_THRESHOLDS.find(t => frac <= t.max);
+}
+
+function replayMultiplierFor(chapterId){
+  if(!chapterId) return 1;
+  const plays = state.chapterPlays[chapterId] || 0;
+  const curve = STATS_CONFIG.chapterReplayMultipliers;
+  return curve[Math.min(plays, curve.length-1)];
+}
+
+/**
+ * Applies a stat delta to one person, with diminishing returns
+ * (if a chapter is active/specified) and jealousy spillover to
+ * rival characters when the stat being raised is affection.
+ * Returns the actual (post-multiplier) delta that was applied.
+ */
+function applyStatDelta(personOrOutfitKey, stat, delta, opts){
+  opts = opts || {};
+  const id = personIdFor(personOrOutfitKey);
+  const chapterId = opts.chapterId !== undefined ? opts.chapterId : state.currentChapter;
+  const mult = opts.ignoreReplayDecay ? 1 : replayMultiplierFor(chapterId);
+  const applied = delta * mult;
+
+  const stats = getStats(id);
+  stats[stat] = clampStat((stats[stat] ?? 0) + applied);
+
+  // Jealousy spillover: raising affection on a rival quietly raises
+  // jealousy in every OTHER rival, scaled by the same applied delta
+  // (so diminishing returns naturally apply to the spillover too).
+  if(stat === "affection" && applied > 0 && CHARACTERS[id] && CHARACTERS[id].rivals){
+    const spill = applied * STATS_CONFIG.jealousySpilloverRatio;
+    Object.entries(CHARACTERS).forEach(([otherId, info])=>{
+      if(otherId === id || !info.rivals) return;
+      const otherStats = getStats(otherId);
+      otherStats.jealousy = clampStat((otherStats.jealousy ?? 0) + spill);
+    });
+  }
+
+  return applied;
+}
+
+/** Marks a chapter as completed once, incrementing its replay
+ *  counter so future passes through it get diminished stat gains. */
+function completeChapter(chapterId){
+  if(!chapterId) return;
+  state.chapterPlays[chapterId] = (state.chapterPlays[chapterId] || 0) + 1;
+}
+
+/**
+ * Evaluates a requirement object against current stats/flags, e.g.:
+ *   { character:"aiko", stat:"affection", min:30 }
+ *   { character:"aiko", stat:"trust", max:10 }
+ *   { flag:"mikiCurious", equals:true }
+ * Multiple keys on one object are AND'd together. Returns true if
+ * no requirement object is given at all (nothing to gate on).
+ */
+function checkRequirement(req){
+  if(!req) return true;
+  if(req.character && req.stat){
+    const v = getStats(req.character)[req.stat] ?? 0;
+    if(req.min !== undefined && v < req.min) return false;
+    if(req.max !== undefined && v > req.max) return false;
+  }
+  if(req.flag !== undefined){
+    const v = state.flags[req.flag];
+    if(req.equals !== undefined && v !== req.equals) return false;
+    if(req.truthy && !v) return false;
+  }
+  return true;
+}
+
+/**
+ * Resolves {{tag}} placeholders in raw script text BEFORE it's
+ * tokenized by parseDialogue, so every existing render path
+ * (typewriter, skip-mode instant render, backlog) gets substitution
+ * for free with no duplicated logic.
+ *
+ * Supported tags:
+ *   {{playerName}}                    -> state.playerName
+ *   {{aikoAffection}}, {{mikiTrust}}, {{ichikoJealousy}}, ... ->
+ *       camelCase "<personId><StatName>" for any person in
+ *       CHARACTERS x any key in STAT_KEYS, e.g. {{aikoIntimacy}}
+ *   {{flag:someFlagName}}             -> raw value of that flag (or "")
+ */
+function resolveTemplateVars(raw){
+  if(!raw || raw.indexOf("{{") === -1) return raw;
+  return raw.replace(/\{\{\s*([\w:]+)\s*\}\}/g, (whole, key)=>{
+    if(key === "playerName") return escapeHtml(state.playerName || "Player");
+
+    if(key.startsWith("flag:")){
+      const flagName = key.slice(5);
+      const v = state.flags[flagName];
+      return v === undefined || v === null ? "" : escapeHtml(String(v));
+    }
+
+    for(const personId of Object.keys(CHARACTERS)){
+      for(const statKey of STAT_KEYS){
+        const camel = personId + statKey[0].toUpperCase() + statKey.slice(1);
+        if(key === camel){
+          const v = getStats(personId)[statKey] ?? 0;
+          // Jealousy is hidden by design — dialogue/UI only ever sees
+          // the qualitative read (low/brewing/intense), never the number.
+          if(statKey === "jealousy") return jealousyDisplayFor(v).label;
+          return String(Math.round(v));
+        }
+      }
+    }
+    return whole; // unknown tag — leave as-is rather than silently eating it
+  });
+}
+function joinUrl(base, ...parts){
+  const cleanBase = base.replace(/\/+$/,"");
+  const cleanParts = parts.map(p=>
+    String(p)
+      .replace(/^\/+|\/+$/g,"")
+      .split("/")
+      .map(seg=>encodeURIComponent(seg))
+      .join("/")
+  );
+  return [cleanBase, ...cleanParts].filter(Boolean).join("/");
+}
+
+function resolveBg(key){
+  const entry = ASSET_MANIFEST.backgrounds[key];
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return { type:"emoji", value:entry.emoji||"🖼️" };
+  return { type:"url", value: joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.bg, entry.file) };
+}
+
+function resolveSprite(character, expression){
+  const charEntry = ASSET_MANIFEST.sprites[character];
+  if(!charEntry) return null;
+  const entry = charEntry[expression] || charEntry.neutral;
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return { type:"emoji", value:entry.emoji||"❓" };
+  return { type:"url", value: joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.sprites, entry.file) };
+}
+
+function resolveBgm(key){
+  const entry = ASSET_MANIFEST.bgm[key];
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return null; // no audio in placeholder mode
+  return joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.bgm, entry.file);
+}
+
+function resolveSfx(key){
+  const entry = ASSET_MANIFEST.sfx[key];
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return null;
+  return joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.sfx, entry.file);
+}
+
+function resolveAmbiance(key){
+  const entry = ASSET_MANIFEST.ambiance[key];
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return null;
+  return joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.ambiance, entry.file);
+}
+
+function resolveEnvironment(key){
+  const entry = ASSET_MANIFEST.environment[key];
+  if(!entry) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return null;
+  return joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.environment, entry.file);
+}
+
+function resolveVoice(character, lineId){
+  const charEntry = ASSET_MANIFEST.voice[character];
+  if(!charEntry) return null;
+  const file = charEntry[lineId];
+  if(!file) return null;
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return null;
+  return joinUrl(CONFIG.R2_BASE_URL, CONFIG.PATHS.voice, file);
+}
+
+/* ============================================================
+   ====================  STATE  =================================
+   ============================================================ */
+const STORAGE_KEYS = {
+  settings: CONFIG.STORAGE_PREFIX+"settings",
+  save:     CONFIG.STORAGE_PREFIX+"save_"
+};
+
+const state = {
+  settings: {
+    furigana: true,
+    textSpeed: CONFIG.TEXT_SPEED_DEFAULT,
+    autoDelay: CONFIG.AUTO_DELAY_DEFAULT,
+    volMaster: 80,
+    volBgm: 70,
+    volSfx: 85,
+    volAmbiance: 70,
+    volVoice: 100,
+    textboxOpacity: 86,
+    textSize: 19,
+    screenShake: true,
+    textFx: true
+  },
+  current: {
+    scriptIndex: 0,
+    sprites: {},      // character -> {expression, pos, el}
+    bgKey: null,
+    bgmKey: null,
+    ambianceKey: null,
+    weatherKey: null,
+    weatherIntensity: 1
+  },
+  flags: {},           // generic story flags for branching
+  stats: {},           // person id -> {affection, trust, intimacy, jealousy}
+  chapterPlays: {},    // chapterId -> times completed (for diminishing returns)
+  currentChapter: null,// chapterId active right now, set via {type:"chapter"} step
+  playerName: "Player",
+  log: [],             // backlog of {name, text}
+  isTyping: false,
+  isAuto: false,
+  isSkipping: false,
+  skipHeld: false,
+  advanceLock: false,
+  typingToken: 0,
+};
+
+function loadSettings(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEYS.settings);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      Object.assign(state.settings, parsed);
+    }
+  }catch(e){ console.warn("settings load failed", e); }
+}
+function saveSettings(){
+  try{ localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings)); }
+  catch(e){ console.warn("settings save failed", e); }
+}
+
+/* ============================================================
+   ====================  AUDIO ENGINE  ==========================
+   ============================================================
+   Two BGM <audio> elements for crossfading, a small pool for
+   SFX (so overlapping sounds don't cut each other off), and a
+   single voice channel (VN convention: only one voice line
+   plays at a time, interrupting the previous).
+*/
+const Audio_ = {
+  bgmA: new Audio(),
+  bgmB: new Audio(),
+  activeBgmEl: null,
+  currentBgmKey: null,
+  ambianceA: new Audio(),
+  ambianceB: new Audio(),
+  activeAmbianceEl: null,
+  currentAmbianceKey: null,
+  sfxPool: [],
+  environmentPool: [],
+  voiceEl: new Audio(),
+  unlocked: false,
+
+  init(){
+    [this.bgmA, this.bgmB, this.ambianceA, this.ambianceB].forEach(a=>{ a.loop = true; a.preload = "auto"; });
+    this.activeBgmEl = this.bgmA;
+    this.activeAmbianceEl = this.ambianceA;
+    for(let i=0;i<6;i++){
+      const a = new Audio();
+      a.preload = "auto";
+      this.sfxPool.push(a);
+    }
+    for(let i=0;i<6;i++){
+      const a = new Audio();
+      a.preload = "auto";
+      this.environmentPool.push(a);
+    }
+    this._applyVolumes();
+  },
+
+  // Browsers block autoplay with sound until a user gesture.
+  // Call this on first click/keydown.
+  unlock(){
+    if(this.unlocked) return;
+    this.unlocked = true;
+    [this.bgmA,this.bgmB,this.ambianceA,this.ambianceB,this.voiceEl,...this.sfxPool,...this.environmentPool].forEach(a=>{
+      a.muted = true;
+      a.play().then(()=>{ a.pause(); a.currentTime=0; a.muted=false; }).catch(()=>{ a.muted=false; });
+    });
+  },
+
+  _vol(channel){
+    const m = state.settings.volMaster/100;
+    const c = state.settings["vol"+channel]/100;
+    return Math.max(0, Math.min(1, m*c));
+  },
+  _applyVolumes(){
+    this.bgmA.volume = this._vol("Bgm");
+    this.bgmB.volume = this._vol("Bgm");
+    this.ambianceA.volume = this._vol("Ambiance");
+    this.ambianceB.volume = this._vol("Ambiance");
+    this.voiceEl.volume = this._vol("Voice");
+    this.sfxPool.forEach(a=>a.volume = this._vol("Sfx"));
+    this.environmentPool.forEach(a=>a.volume = this._vol("Sfx"));
+  },
+
+  // Shared fade engine for BGM/ambiance crossfades and fade-outs.
+  // Uses requestAnimationFrame instead of setInterval (no timer
+  // drift/jank when the tab is busy) and an equal-power curve
+  // (sin/cos taper) rather than a linear volume ramp — linear
+  // crossfades have an audible dip in perceived loudness partway
+  // through, since loudness doesn't scale linearly with volume.
+  // `fadeToken` per-channel lets a new fade started mid-transition
+  // (e.g. rapid scene changes) cleanly supersede the old one
+  // instead of two rAF loops fighting over the same element's volume.
+  _bgmFadeToken: 0,
+  _ambianceFadeToken: 0,
+  _runFade(channelTokenKey, fadeMs, onFrame, onDone){
+    const myToken = ++this[channelTokenKey];
+    if(!fadeMs || fadeMs <= 0){
+      onFrame(1);
+      if(onDone) onDone();
+      return;
+    }
+    const startTime = performance.now();
+    const step = (now)=>{
+      if(myToken !== this[channelTokenKey]) return; // superseded
+      const t = Math.min(1, (now-startTime)/fadeMs);
+      onFrame(t);
+      if(t < 1) requestAnimationFrame(step);
+      else if(onDone) onDone();
+    };
+    requestAnimationFrame(step);
+  },
+
+  playBgm(key, fadeMs=900){
+    if(CONFIG.USE_EMOJI_PLACEHOLDERS) { this.currentBgmKey = key; return; } // no-op in placeholder mode
+    if(key === this.currentBgmKey) return;
+    const url = resolveBgm(key);
+    if(!url) return;
+    const incoming = this.activeBgmEl === this.bgmA ? this.bgmB : this.bgmA;
+    const outgoing = this.activeBgmEl;
+    incoming.src = url;
+    incoming.currentTime = 0;
+    incoming.volume = 0;
+    incoming.play().catch(()=>{});
+    const targetVol = this._vol("Bgm");
+    this._runFade("_bgmFadeToken", fadeMs, (t)=>{
+      // equal-power taper: incoming rides sin(t*90deg) up, outgoing
+      // rides cos(t*90deg) down — their squared sum stays ~1 so the
+      // combined perceived loudness doesn't dip mid-crossfade.
+      incoming.volume = targetVol * Math.sin(t * Math.PI/2);
+      outgoing.volume = targetVol * Math.cos(t * Math.PI/2);
+    }, ()=>{
+      outgoing.pause();
+      outgoing.src = "";
+    });
+    this.activeBgmEl = incoming;
+    this.currentBgmKey = key;
+  },
+
+  stopBgm(fadeMs=600){
+    if(!this.activeBgmEl) return;
+    const el = this.activeBgmEl;
+    const startVol = el.volume;
+    this._runFade("_bgmFadeToken", fadeMs, (t)=>{
+      el.volume = startVol * Math.cos(t * Math.PI/2);
+    }, ()=>{
+      el.pause(); el.src = "";
+    });
+    this.currentBgmKey = null;
+  },
+
+  // Ambiance: same crossfade pattern as BGM, but on its own
+  // pair of elements/volume bucket so an ambiance bed (rain, wind)
+  // can play independently of (and simultaneously with) BGM.
+  playAmbiance(key, fadeMs=900){
+    if(CONFIG.USE_EMOJI_PLACEHOLDERS) { this.currentAmbianceKey = key; return; }
+    if(key === this.currentAmbianceKey) return;
+    const url = resolveAmbiance(key);
+    if(!url) return;
+    const incoming = this.activeAmbianceEl === this.ambianceA ? this.ambianceB : this.ambianceA;
+    const outgoing = this.activeAmbianceEl;
+    incoming.src = url;
+    incoming.currentTime = 0;
+    incoming.volume = 0;
+    incoming.play().catch(()=>{});
+    const targetVol = this._vol("Ambiance");
+    this._runFade("_ambianceFadeToken", fadeMs, (t)=>{
+      incoming.volume = targetVol * Math.sin(t * Math.PI/2);
+      outgoing.volume = targetVol * Math.cos(t * Math.PI/2);
+    }, ()=>{
+      outgoing.pause();
+      outgoing.src = "";
+    });
+    this.activeAmbianceEl = incoming;
+    this.currentAmbianceKey = key;
+  },
+
+  stopAmbiance(fadeMs=600){
+    if(!this.activeAmbianceEl) return;
+    const el = this.activeAmbianceEl;
+    const startVol = el.volume;
+    this._runFade("_ambianceFadeToken", fadeMs, (t)=>{
+      el.volume = startVol * Math.cos(t * Math.PI/2);
+    }, ()=>{
+      el.pause(); el.src = "";
+    });
+    this.currentAmbianceKey = null;
+  },
+
+  playSfx(key){
+    if(CONFIG.USE_EMOJI_PLACEHOLDERS) return; // silent placeholder
+    const url = resolveSfx(key);
+    if(!url) return;
+    const free = this.sfxPool.find(a=>a.paused) || this.sfxPool[0];
+    free.src = url;
+    free.currentTime = 0;
+    free.volume = this._vol("Sfx");
+    free.play().catch(()=>{});
+  },
+
+  // Environment: one-shot foley (doors, locks, paper, props, impacts).
+  // Same pool-based playback as SFX, kept on its own manifest/pool so
+  // it's never mixed up with transition stingers.
+  playEnvironment(key){
+    if(CONFIG.USE_EMOJI_PLACEHOLDERS) return;
+    const url = resolveEnvironment(key);
+    if(!url) return;
+    const free = this.environmentPool.find(a=>a.paused) || this.environmentPool[0];
+    free.src = url;
+    free.currentTime = 0;
+    free.volume = this._vol("Sfx");
+    free.play().catch(()=>{});
+  },
+
+  playVoice(character, lineId){
+    if(CONFIG.USE_EMOJI_PLACEHOLDERS) return;
+    const url = resolveVoice(character, lineId);
+    if(!url) return;
+    this.voiceEl.pause();
+    this.voiceEl.src = url;
+    this.voiceEl.currentTime = 0;
+    this.voiceEl.volume = this._vol("Voice");
+    this.voiceEl.play().catch(()=>{});
+  }
+};
+
+/* ============================================================
+   ====================  DOM REFS  ==============================
+   ============================================================ */
+const $ = (id)=>document.getElementById(id);
+const dom = {
+  root: $("vn-root"),
+  bootScreen: $("boot-screen"),
+  bgA: $("bg-a"),
+  bgB: $("bg-b"),
+  spriteLayer: $("sprite-layer"),
+  weatherLayer: $("weather-layer"),
+  advanceHitbox: $("advance-hitbox"),
+  textboxWrap: $("textbox-wrap"),
+  textbox: $("textbox"),
+  speakerName: $("speaker-name"),
+  dialogueText: $("dialogue-text"),
+  continueIndicator: $("continue-indicator"),
+  topBar: $("top-bar"),
+  btnAuto: $("btn-auto"),
+  btnSkip: $("btn-skip"),
+  btnLog: $("btn-log"),
+  btnStats: $("btn-stats"),
+  btnSave: $("btn-save"),
+  btnLoad: $("btn-load"),
+  btnSettings: $("btn-settings"),
+  overlaySettings: $("overlay-settings"),
+  overlayLog: $("overlay-log"),
+  overlayStats: $("overlay-stats"),
+  overlaySaveload: $("overlay-saveload"),
+  logList: $("log-list"),
+  statsList: $("stats-list"),
+  saveloadList: $("saveload-list"),
+  saveloadTitle: $("saveload-title"),
+  choiceLayer: $("choice-layer"),
+  choiceList: $("choice-list"),
+};
+
+let bgActiveEl = dom.bgA;
+let bgInactiveEl = dom.bgB;
+
+/* ============================================================
+   ====================  WEATHER ENGINE  =========================
+   ============================================================
+   Canvas-based scene weather (currently: rain), rendered into
+   #weather-layer (z-index 4 — above sprites, below the vignette).
+   Adapted from a standalone rain demo into a reusable, fadeable
+   layer that scene scripts can turn on/off via:
+     { type:"weather", key:"rain", intensity:1 }   -> fade in
+     { type:"weather", key:null }                  -> fade out
+   Drop count scales with canvas area so rain looks consistent
+   across different aspect ratios/window sizes rather than being
+   tuned for one fixed 500x300 canvas. Opacity is driven by a
+   short rAF tween (not CSS transition) so "fade out" can fully
+   stop the simulation loop once invisible, instead of leaving a
+   hidden canvas animating forever in the background.
+*/
+const FIXED_STEP = 16; // simulation step in ms, matches ~60fps
+
+// Small vector/random helpers, scoped to the weather sim (kept as
+// a plain object rather than inlined so the per-drop math reads
+// the same as the original rain demo it was adapted from).
+const math = {
+  randomInteger: function (min, max) {
+    return Math.round((Math.random() * (max - min)) + min);
+  },
+  lerp: function (a, b, n) {
+    return a + ((b - a) * n);
+  },
+  scaleVector: function (v, s) {
+    v.x *= s;
+    v.y *= s;
+  },
+  normalizeVector: function (v) {
+    const m = Math.sqrt(v.x * v.x + v.y * v.y);
+    math.scaleVector(v, 1 / m);
+  }
+};
+
+const Weather_ = {
+  canvas: null,
+  ctx: null,
+  raf: null,
+  drops: [],
+  current: null,        // active weather key, or null
+  intensity: 1,
+  fadeToken: 0,
+  lastTime: 0,
+  resizeObserver: null,
+
+  // Tunables (ported from the rain demo, scaled by intensity/area)
+  config: {
+    rain: {
+      windVelocity: -0.1,
+      dropColor: "rgba(180,210,255,0.9)",
+      dropWidth: 1,
+      dropXBuffer: 50,
+      dropMinVelocity: 0.3,
+      dropMaxVelocity: 0.6,
+      dropMinLength: 20,
+      dropMaxLength: 40,
+      dropMinAlpha: 0.3,
+      dropMaxAlpha: 1,
+      baseDropCount: 200,   // at baseArea, intensity 1
+      baseArea: 500*300
+    }
+  },
+
+  _ensureCanvas(){
+    if(this.canvas) return;
+    this.canvas = document.createElement("canvas");
+    this.ctx = this.canvas.getContext("2d");
+    dom.weatherLayer.appendChild(this.canvas);
+    this._resize();
+    // Keep the canvas pixel size in sync with the stage as the
+    // window/viewport resizes, so drops don't stretch or clip.
+    this.resizeObserver = new ResizeObserver(()=>this._resize());
+    this.resizeObserver.observe(dom.weatherLayer);
+  },
+
+  _resize(){
+    if(!this.canvas) return;
+    const w = dom.weatherLayer.clientWidth || dom.root.clientWidth || 500;
+    const h = dom.weatherLayer.clientHeight || dom.root.clientHeight || 300;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    if(this.current === "rain") this._initDrops();
+  },
+
+  _dropCountFor(cfg){
+    const area = this.canvas.width * this.canvas.height;
+    const scaled = cfg.baseDropCount * (area/cfg.baseArea) * this.intensity;
+    return Math.max(8, Math.round(scaled));
+  },
+
+  _resetDrop(drop, cfg){
+    const scale = Math.random();
+    drop.x = math.randomInteger(-cfg.dropXBuffer, this.canvas.width + cfg.dropXBuffer);
+    drop.vx = cfg.windVelocity;
+    drop.vy = math.lerp(cfg.dropMinVelocity, cfg.dropMaxVelocity, scale);
+    drop.l = math.lerp(cfg.dropMinLength, cfg.dropMaxLength, scale);
+    drop.a = math.lerp(cfg.dropMinAlpha, cfg.dropMaxAlpha, scale);
+    drop.y = math.randomInteger(-drop.l, 0);
+  },
+
+  _initDrops(){
+    const cfg = this.config.rain;
+    const count = this._dropCountFor(cfg);
+    this.drops = [];
+    for(let i=0;i<count;i++){
+      const drop = {};
+      this._resetDrop(drop, cfg);
+      drop.y = math.randomInteger(0, this.canvas.height);
+      this.drops.push(drop);
+    }
+  },
+
+  _updateDrops(dt){
+    const cfg = this.config.rain;
+    for(let i=this.drops.length-1;i>=0;--i){
+      const drop = this.drops[i];
+      drop.x += drop.vx * dt;
+      drop.y += drop.vy * dt;
+      if(drop.y > this.canvas.height + drop.l) this._resetDrop(drop, cfg);
+    }
+  },
+
+  _renderRain(){
+    const ctx = this.ctx;
+    const cfg = this.config.rain;
+    ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+    ctx.save();
+    ctx.strokeStyle = cfg.dropColor;
+    ctx.lineWidth = cfg.dropWidth;
+    for(let i=0;i<this.drops.length;++i){
+      const drop = this.drops[i];
+      const x1 = Math.round(drop.x);
+      const y1 = Math.round(drop.y);
+      const v = { x: drop.vx, y: drop.vy };
+      math.normalizeVector(v);
+      math.scaleVector(v, -drop.l);
+      const x2 = Math.round(x1 + v.x);
+      const y2 = Math.round(y1 + v.y);
+      ctx.globalAlpha = drop.a;
+      ctx.beginPath();
+      ctx.moveTo(x1,y1);
+      ctx.lineTo(x2,y2);
+      ctx.stroke();
+      ctx.closePath();
+    }
+    ctx.restore();
+  },
+
+  _loop(time){
+    if(!this.current){ this.raf = null; return; }
+    let dt = time - this.lastTime;
+    this.lastTime = time;
+    if(dt > 100) dt = FIXED_STEP;
+    while(dt >= FIXED_STEP){
+      if(this.current === "rain") this._updateDrops(FIXED_STEP);
+      dt -= FIXED_STEP;
+    }
+    if(this.current === "rain") this._renderRain();
+    this.raf = requestAnimationFrame((t)=>this._loop(t));
+  },
+
+  _startLoop(){
+    if(this.raf) return;
+    this.lastTime = performance.now();
+    this.raf = requestAnimationFrame((t)=>this._loop(t));
+  },
+
+  _stopLoop(){
+    if(this.raf){ cancelAnimationFrame(this.raf); this.raf = null; }
+  },
+
+  // Smoothly fades #weather-layer's opacity to a target value over
+  // fadeMs using rAF (so it's easy to chain "fully invisible -> stop
+  // simulating" without fighting a CSS transitionend race).
+  _fadeTo(target, fadeMs, onDone){
+    const myToken = ++this.fadeToken;
+    if(!fadeMs || fadeMs <= 0){
+      dom.weatherLayer.style.opacity = String(target);
+      if(onDone) onDone();
+      return;
+    }
+    const start = parseFloat(dom.weatherLayer.style.opacity || "0");
+    const startTime = performance.now();
+    const step = (now)=>{
+      if(myToken !== this.fadeToken) return; // superseded by a newer fade
+      const t = Math.min(1, (now-startTime)/fadeMs);
+      const eased = t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; // ease-in-out
+      dom.weatherLayer.style.opacity = String(start + (target-start)*eased);
+      if(t < 1){
+        requestAnimationFrame(step);
+      } else if(onDone){
+        onDone();
+      }
+    };
+    requestAnimationFrame(step);
+  },
+
+  /**
+   * Turns scene weather on. key: "rain" (more keys can be added to
+   * `config` later, e.g. "snow"). intensity: 0-2ish multiplier on
+   * drop density, default 1. fadeMs: visual fade-in duration so the
+   * effect eases into a scene rather than popping on abruptly.
+   */
+  set(key, opts={}){
+    const fadeMs = opts.fadeMs ?? 900;
+    this.intensity = opts.intensity ?? 1;
+    if(!key){
+      this._fadeTo(0, fadeMs, ()=>{ this._stopLoop(); this.current = null; });
+      return;
+    }
+    this._ensureCanvas();
+    this.current = key;
+    if(key === "rain") this._initDrops();
+    this._startLoop();
+    this._fadeTo(1, fadeMs);
+  },
+
+  clear(fadeMs=900){ this.set(null, { fadeMs }); }
+};
+
+/* ============================================================
+   ====================  BACKGROUND RENDER  =====================
+   ============================================================ */
+/**
+ * Crossfades to a new background. For real image URLs, we wait for
+ * the image to finish decoding before starting the opacity
+ * transition — without this, an uncached bg can briefly show a
+ * blank/black frame mid-crossfade while the browser is still
+ * fetching/decoding it, which reads as a stutter rather than a
+ * clean transition. Already-cached images resolve immediately, so
+ * this adds no perceptible delay for assets the preloader warmed.
+ */
+function setBackground(key){
+  const res = resolveBg(key);
+  state.current.bgKey = key;
+
+  const doSwap = ()=>{
+    bgInactiveEl.style.opacity = "1";
+    bgActiveEl.style.opacity = "0";
+    const tmp = bgActiveEl; bgActiveEl = bgInactiveEl; bgInactiveEl = tmp;
+  };
+
+  if(!res){
+    bgInactiveEl.style.backgroundImage = "";
+    bgInactiveEl.textContent = "";
+    doSwap();
+  } else if(res.type === "emoji"){
+    bgInactiveEl.style.backgroundImage = "";
+    bgInactiveEl.textContent = res.value;
+    doSwap();
+  } else {
+    bgInactiveEl.textContent = "";
+    const img = new Image();
+    img.onload = ()=>{
+      bgInactiveEl.style.backgroundImage = `url("${res.value}")`;
+      doSwap();
+    };
+    img.onerror = ()=>{
+      // Don't hang the scene on a broken/missing asset — swap anyway
+      // (the layer will just stay on whatever it last showed).
+      bgInactiveEl.style.backgroundImage = `url("${res.value}")`;
+      doSwap();
+    };
+    img.src = res.value;
+    if(img.complete) {
+      // Already in the image cache — fire the swap on this tick
+      // rather than waiting a frame, so cached transitions stay snappy.
+      img.onload();
+    }
+  }
+}
+
+/* ============================================================
+   ====================  SPRITE RENDER  ==========================
+   ============================================================
+   state.current.sprites[character] = { el, wrapEl, expression, pos, motion }
+*/
+function getOrCreateSpriteWrap(character){
+  let entry = state.current.sprites[character];
+  if(entry) return entry;
+
+  const wrapEl = document.createElement("div");
+  wrapEl.className = "sprite";
+  wrapEl.dataset.character = character;
+
+  const innerEl = document.createElement("div");
+  innerEl.style.width = "100%";
+  innerEl.style.height = "100%";
+  innerEl.style.display = "flex";
+  innerEl.style.alignItems = "flex-end";
+  innerEl.style.justifyContent = "center";
+  wrapEl.appendChild(innerEl);
+
+  dom.spriteLayer.appendChild(wrapEl);
+  entry = { wrapEl, innerEl, expression:null, pos:"center", motion:null };
+  state.current.sprites[character] = entry;
+  return entry;
+}
+
+function renderSpriteContent(entry, character, expression){
+  const res = resolveSprite(character, expression);
+  entry.innerEl.innerHTML = "";
+  entry.wrapEl.classList.remove("is-emoji");
+  if(!res) return;
+  if(res.type === "emoji"){
+    entry.wrapEl.classList.add("is-emoji");
+    entry.innerEl.textContent = res.value;
+  } else {
+    const img = document.createElement("img");
+    img.src = res.value;
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "contain";
+    entry.innerEl.appendChild(img);
+  }
+  entry.expression = expression;
+}
+
+/**
+ * showSprite — bring a character on stage (or update them if already present)
+ * opts: { expression, pos: 'left'|'center'|'right', transition: 'slide'|'fade'|'instant', motion: null|'idle'|'speak'|'nod'|'shake'|'tilt'|'jump' }
+ */
+function showSprite(character, opts={}){
+  const entry = getOrCreateSpriteWrap(character);
+  const pos = opts.pos || entry.pos || "center";
+  const transition = opts.transition || "slide";
+  const wasVisible = entry.wrapEl.classList.contains("is-active") || entry.wrapEl.dataset.shown === "1";
+
+  renderSpriteContent(entry, character, opts.expression || entry.expression || "neutral");
+  entry.pos = pos;
+  entry.wrapEl.dataset.pos = pos;
+  entry.wrapEl.classList.add("is-active");
+  entry.wrapEl.classList.remove("is-hidden","is-dimmed");
+  entry.wrapEl.dataset.shown = "1";
+
+  if(!wasVisible){
+    const animClass = transition === "fade" ? "anim-fadeIn"
+      : transition === "instant" ? ""
+      : `anim-slideIn${capitalize(pos)}`;
+    entry.wrapEl.style.animation = "none";
+    // force reflow to restart animation reliably
+    void entry.wrapEl.offsetWidth;
+    if(animClass) entry.wrapEl.classList.add(animClass);
+    entry.wrapEl.addEventListener("animationend", function handler(){
+      entry.wrapEl.classList.remove(animClass);
+      entry.wrapEl.removeEventListener("animationend", handler);
+    });
+  }
+
+  setSpriteMotion(character, opts.motion ?? "idle");
+}
+
+function hideSprite(character, opts={}){
+  const entry = state.current.sprites[character];
+  if(!entry) return;
+  const transition = opts.transition || "slide";
+  const pos = entry.pos || "center";
+  const animClass = transition === "fade" ? "anim-fadeOut"
+    : transition === "instant" ? ""
+    : `anim-slideOut${capitalize(pos)}`;
+
+  clearSpriteMotion(character);
+  entry.wrapEl.dataset.shown = "0";
+
+  if(!animClass){
+    entry.wrapEl.classList.add("is-hidden");
+    return;
+  }
+  entry.wrapEl.classList.add(animClass);
+  entry.wrapEl.addEventListener("animationend", function handler(){
+    entry.wrapEl.classList.add("is-hidden");
+    entry.wrapEl.classList.remove(animClass);
+    entry.wrapEl.removeEventListener("animationend", handler);
+  });
+}
+
+function setSpriteExpression(character, expression){
+  const entry = state.current.sprites[character];
+  if(!entry) return;
+  renderSpriteContent(entry, character, expression);
+}
+
+function setSpriteDimmed(character, dimmed){
+  const entry = state.current.sprites[character];
+  if(!entry) return;
+  entry.wrapEl.classList.toggle("is-dimmed", dimmed);
+  entry.wrapEl.classList.toggle("is-active", !dimmed);
+}
+
+const MOTION_CLASSES = ["sprite-motion-idle","sprite-motion-speak","sprite-motion-nod","sprite-motion-shake","sprite-motion-tilt","sprite-motion-jump"];
+function clearSpriteMotion(character){
+  const entry = state.current.sprites[character];
+  if(!entry) return;
+  MOTION_CLASSES.forEach(c=>entry.innerEl.classList.remove(c));
+  entry.motion = null;
+}
+function setSpriteMotion(character, motion){
+  const entry = state.current.sprites[character];
+  if(!entry) return;
+  if(!state.settings.screenShake && (motion==="shake")) motion = "nod";
+  MOTION_CLASSES.forEach(c=>entry.innerEl.classList.remove(c));
+  if(motion){
+    entry.innerEl.classList.add("sprite-motion-"+motion);
+    // one-shot motions (nod/shake/jump) auto-clear back to idle after they finish
+    if(["nod","shake","jump"].includes(motion)){
+      entry.innerEl.addEventListener("animationend", function handler(){
+        entry.innerEl.classList.remove("sprite-motion-"+motion);
+        entry.innerEl.classList.add("sprite-motion-idle");
+        entry.innerEl.removeEventListener("animationend", handler);
+      }, { once:true });
+    }
+  }
+  entry.motion = motion;
+}
+
+/** Sets the visual "who is talking" state: active speaker pulses + full brightness, others dim */
+function setActiveSpeaker(character){
+  Object.keys(state.current.sprites).forEach(name=>{
+    const isSpeaker = name === character;
+    setSpriteDimmed(name, character ? !isSpeaker : false);
+    if(isSpeaker) setSpriteMotion(name, "speak");
+    else if(state.current.sprites[name].motion === "speak") setSpriteMotion(name, "idle");
+  });
+}
+
+function capitalize(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+/* ============================================================
+   ====================  TEXT FX / PARSER  ======================
+   ============================================================
+   Supported inline tags inside dialogue strings:
+     {red}...{/red}  {blue}...{/blue}  {gold}...{/gold}  {green}...{/green}  {dim}...{/dim}
+     {b}...{/b}  {i}...{/i}
+     {shake}...{/shake}   per-character shake animation
+     {wave}...{/wave}     per-character wave animation
+     {pause=400}          inserts a typewriter pause of N ms at that point (consumes no visible char)
+   Furigana: use 漢字[かんじ] — converted to <ruby>漢字<rt>かんじ</rt></ruby>
+   These all compose: {shake}{red}危ない[あぶない]！{/red}{/shake}
+*/
+
+const TAG_CLASS_MAP = { red:"tag-red", blue:"tag-blue", gold:"tag-gold", green:"tag-green", dim:"tag-dim", b:"tag-b", i:"tag-i" };
+const FX_TAGS = new Set(["shake","wave"]);
+
+/**
+ * Parses raw script text into a flat list of "tokens" the typewriter can
+ * reveal one at a time, each carrying the set of active style/fx tags and
+ * furigana info so we can rebuild correct nested HTML at any reveal point.
+ */
+function parseDialogue(raw){
+  const tokens = []; // { char, classes:[], fx:[], rubyBase?, rubyReading?, pauseMs? }
+  let i = 0;
+  const styleStack = [];
+  const fxStack = [];
+
+  while(i < raw.length){
+    // pause directive: {pause=400}
+    const pauseMatch = raw.slice(i).match(/^\{pause=(\d+)\}/);
+    if(pauseMatch){
+      tokens.push({ char:"", classes:[...styleStack], fx:[...fxStack], pauseMs:parseInt(pauseMatch[1],10) });
+      i += pauseMatch[0].length;
+      continue;
+    }
+    // closing tag {/x}
+    const closeMatch = raw.slice(i).match(/^\{\/(\w+)\}/);
+    if(closeMatch){
+      const tag = closeMatch[1];
+      if(FX_TAGS.has(tag)){
+        const idx = fxStack.lastIndexOf(tag);
+        if(idx>-1) fxStack.splice(idx,1);
+      } else {
+        const idx = styleStack.lastIndexOf(tag);
+        if(idx>-1) styleStack.splice(idx,1);
+      }
+      i += closeMatch[0].length;
+      continue;
+    }
+    // opening tag {x}
+    const openMatch = raw.slice(i).match(/^\{(\w+)\}/);
+    if(openMatch){
+      const tag = openMatch[1];
+      if(FX_TAGS.has(tag)) fxStack.push(tag);
+      else if(TAG_CLASS_MAP[tag]) styleStack.push(tag);
+      i += openMatch[0].length;
+      continue;
+    }
+    // furigana 漢字[かんじ]
+    const rubyMatch = raw.slice(i).match(/^([\u4e00-\u9fff々]+)\[([^\]]+)\]/);
+    if(rubyMatch){
+      tokens.push({
+        char: rubyMatch[1],
+        rubyReading: rubyMatch[2],
+        classes:[...styleStack],
+        fx:[...fxStack]
+      });
+      i += rubyMatch[0].length;
+      continue;
+    }
+    // plain character
+    tokens.push({ char: raw[i], classes:[...styleStack], fx:[...fxStack] });
+    i += 1;
+  }
+  return tokens;
+}
+
+function renderTokenHTML(tok){
+  let inner;
+  if(tok.rubyReading){
+    inner = state.settings.furigana
+      ? `<ruby class="furigana-rt">${escapeHtml(tok.char)}<rt>${escapeHtml(tok.rubyReading)}</rt></ruby>`
+      : escapeHtml(tok.char);
+  } else {
+    inner = tok.char === "\n" ? "<br>" : escapeHtml(tok.char);
+  }
+  if(tok.fx && tok.fx.length && state.settings.textFx){
+    tok.fx.forEach(fx=>{ inner = `<span class="fx-${fx}">${inner}</span>`; });
+  }
+  if(tok.classes && tok.classes.length){
+    tok.classes.forEach(cls=>{
+      const mapped = TAG_CLASS_MAP[cls];
+      if(mapped) inner = `<span class="${mapped}">${inner}</span>`;
+    });
+  }
+  return inner;
+}
+
+function escapeHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+/* ============================================================
+   ====================  TYPEWRITER  =============================
+   ============================================================ */
+function textSpeedToMs(speed){
+  // speed 1-100 -> ms delay per character, inverted + eased
+  const t = (101-speed)/100; // 0..1, higher = slower
+  return 2 + t*55;
+}
+
+function renderUpToIndex(tokens, count){
+  let html = "";
+  for(let i=0;i<count;i++){
+    html += renderTokenHTML(tokens[i]);
+  }
+  return html;
+}
+
+/**
+ * Types out dialogue text into #dialogue-text. Resolves when fully revealed
+ * (or immediately if skipped). Clicking/space while typing fast-forwards
+ * to full text instead of advancing to next line.
+ */
+let activeTypewriter = null; // { tokens, finish() } for the in-flight line
+
+function typeDialogue(rawText){
+  return new Promise(resolve=>{
+    const myToken = ++state.typingToken;
+    const tokens = parseDialogue(rawText);
+    dom.dialogueText.innerHTML = "";
+    state.isTyping = true;
+    state.isSkipping = false;
+    dom.textboxWrap.classList.add("is-visible");
+    dom.textboxWrap.classList.remove("show-continue");
+
+    let i = 0;
+    const baseDelay = textSpeedToMs(state.settings.textSpeed);
+
+    function finish(){
+      if(myToken !== state.typingToken) return;
+      clearTimeout(window.__vnTypeTimer);
+      dom.dialogueText.innerHTML = renderUpToIndex(tokens, tokens.length);
+      state.isTyping = false;
+      state.isSkipping = false;
+      dom.textboxWrap.classList.add("show-continue");
+      activeTypewriter = null;
+      resolve();
+    }
+
+    function step(){
+      if(myToken !== state.typingToken) return; // superseded by a new line
+      if(i >= tokens.length){ finish(); return; }
+
+      const tok = tokens[i];
+      i++;
+      dom.dialogueText.innerHTML = renderUpToIndex(tokens, i);
+
+      let delay = baseDelay;
+      if(/[。！？.!?]/.test(tok.char)) delay += 220;
+      else if(/[、,]/.test(tok.char)) delay += 110;
+      if(tok.pauseMs) delay += tok.pauseMs;
+
+      window.__vnTypeTimer = setTimeout(step, delay);
+    }
+
+    activeTypewriter = { finish };
+    step();
+  });
+}
+
+function skipTypingToEnd(){
+  if(state.isTyping && activeTypewriter){
+    activeTypewriter.finish();
+  }
+}
+
+/* ============================================================
+   ====================  SCRIPT RUNNER  ==========================
+   ============================================================
+   The script is a flat array of step objects. Supported step
+   "type" values:
+
+   { type:"bg", key:"classroom" }
+   { type:"bgm", key:"daily" | null }                    null stops bgm
+   { type:"sfx", key:"bell" }                             one-shot transition/stinger (ASSET_MANIFEST.sfx)
+   { type:"ambiance", key:"rain_leaves" | null }          looping atmosphere bed (ASSET_MANIFEST.ambiance), null stops it
+   { type:"weather", key:"rain" | null, intensity:1, fadeMs:900 }  scene weather overlay (canvas), null fades it out. Pair with an "ambiance" step (e.g. key:"rain") for matching sound.
+   { type:"environment", key:"door_wood_open" }           one-shot foley (ASSET_MANIFEST.environment)
+   { type:"show", character:"yuki", expression:"happy", pos:"left", transition:"slide", motion:"idle" }
+   { type:"hide", character:"yuki", transition:"slide" }
+   { type:"expression", character:"yuki", expression:"angry" }
+   { type:"motion", character:"yuki", motion:"shake" }    one-shot or idle/speak/tilt loop
+   { type:"say", character:"yuki"|null, name:"Yuki", text:"...", voice:"line_001" }
+   { type:"choice", options:[{ label:"...", goto:"label_id" }, ...] }
+   { type:"label", id:"some_label" }                      jump target, no-op when reached normally
+   { type:"jump", goto:"some_label" }
+   { type:"setFlag", key:"likesKai", value:true }
+   { type:"stat", character:"aiko", stat:"affection", delta:5 }  raises/lowers a stat via applyStatDelta()
+   { type:"end" }                                          ends the demo / shows a restart affordance
+
+   This is intentionally a small, readable instruction set — extend
+   it by adding a new "type" and a matching case in runStep().
+*/
+
+let SCRIPT = []; // populated by loadScript()
+let labelIndex = {};
+
+function buildLabelIndex(){
+  labelIndex = {};
+  SCRIPT.forEach((step, idx)=>{
+    if(step.type === "label") labelIndex[step.id] = idx;
+  });
+}
+
+function logLine(name, text){
+  if(!text) return;
+  state.log.push({ name: name||"", text });
+  if(state.log.length > 500) state.log.shift();
+}
+
+/** Runs steps starting at state.current.scriptIndex until a step that
+ *  requires user input (say / choice) or the end of script. */
+async function runFrom(index){
+  state.current.scriptIndex = index;
+  while(state.current.scriptIndex < SCRIPT.length){
+    const step = SCRIPT[state.current.scriptIndex];
+    const consumed = await runStep(step);
+    if(consumed === "WAIT_FOR_ADVANCE" || consumed === "WAIT_FOR_CHOICE" || consumed === "STOP"){
+      return;
+    }
+    state.current.scriptIndex++;
+  }
+}
+
+async function runStep(step){
+  switch(step.type){
+    case "label":
+      return null; // no-op, just a jump target
+
+    case "jump":
+      state.current.scriptIndex = labelIndex[step.goto] ?? state.current.scriptIndex;
+      return null;
+
+    case "bg":
+      setBackground(step.key);
+      return null;
+
+    case "bgm":
+      if(step.key) Audio_.playBgm(step.key);
+      else Audio_.stopBgm();
+      return null;
+
+    case "sfx":
+      Audio_.playSfx(step.key);
+      return null;
+
+    case "ambiance":
+      if(step.key) Audio_.playAmbiance(step.key);
+      else Audio_.stopAmbiance();
+      return null;
+
+    case "weather":
+      state.current.weatherKey = step.key || null;
+      state.current.weatherIntensity = step.intensity ?? 1;
+      Weather_.set(step.key, { intensity: step.intensity, fadeMs: step.fadeMs });
+      return null;
+
+    case "environment":
+      Audio_.playEnvironment(step.key);
+      return null;
+
+    case "show":
+      showSprite(step.character, {
+        expression: step.expression,
+        pos: step.pos,
+        transition: step.transition,
+        motion: step.motion
+      });
+      return null;
+
+    case "hide":
+      hideSprite(step.character, { transition: step.transition });
+      return null;
+
+    case "expression":
+      setSpriteExpression(step.character, step.expression);
+      return null;
+
+    case "motion":
+      setSpriteMotion(step.character, step.motion);
+      return null;
+
+    case "setFlag":
+      state.flags[step.key] = step.value;
+      return null;
+
+    case "stat":
+      applyStatDelta(step.character, step.stat, step.delta, step.opts);
+      return null;
+
+    case "say": {
+      dom.speakerName.innerHTML = step.name
+        ? `<span class="name-rule"></span>${escapeHtml(step.name)}`
+        : "";
+      setActiveSpeaker(step.character || null);
+      if(step.voice && step.character) Audio_.playVoice(step.character, step.voice);
+
+      if(state.isSkipping){
+        const tokens = parseDialogue(step.text);
+        dom.dialogueText.innerHTML = renderUpToIndex(tokens, tokens.length);
+        state.isTyping = false;
+        dom.textboxWrap.classList.add("is-visible");
+        dom.textboxWrap.classList.add("show-continue");
+      } else {
+        await typeDialogue(step.text);
+      }
+      logLine(step.name, stripTagsForLog(step.text));
+
+      if(state.isAuto && !state.isSkipping){
+        const waitMs = 600 + (101-state.settings.autoDelay)*40;
+        await new Promise(r=>{
+          window.__vnAutoTimer = setTimeout(r, waitMs);
+        });
+        return null; // fall through, advance automatically
+      }
+      if(state.isSkipping){
+        return null; // keep blasting through during skip-hold
+      }
+      return "WAIT_FOR_ADVANCE";
+    }
+
+    case "choice": {
+      await showChoices(step.options);
+      return "WAIT_FOR_CHOICE";
+    }
+
+    case "end":
+      dom.speakerName.textContent = "";
+      dom.dialogueText.textContent = "— end of demo script —";
+      dom.textboxWrap.classList.remove("show-continue");
+      setActiveSpeaker(null);
+      return "STOP";
+
+    default:
+      console.warn("Unknown step type:", step.type);
+      return null;
+  }
+}
+
+function stripTagsForLog(raw){
+  return raw
+    .replace(/\{pause=\d+\}/g,"")
+    .replace(/\{\/?[a-z]+\}/g,"")
+    .replace(/([\u4e00-\u9fff々]+)\[([^\]]+)\]/g, "$1");
+}
+
+function advance(){
+  if(state.advanceLock) return;
+  if(dom.choiceLayer.classList.contains("is-open")) return;
+  if(anyPanelOpen()) return;
+
+  if(state.isTyping){
+    skipTypingToEnd();
+    return;
+  }
+  state.advanceLock = true;
+  runFrom(state.current.scriptIndex+1).finally(()=>{ state.advanceLock = false; });
+}
+
+/* ---- choices ---- */
+function showChoices(options){
+  return new Promise(resolve=>{
+    dom.choiceList.innerHTML = "";
+    options.forEach((opt, idx)=>{
+      const btn = document.createElement("button");
+      btn.className = "choice-btn";
+      btn.textContent = opt.label;
+      btn.style.animationDelay = (idx*60)+"ms";
+      btn.addEventListener("click", ()=>{
+        dom.choiceLayer.classList.remove("is-open");
+        logLine("", "▸ "+opt.label);
+        const target = labelIndex[opt.goto];
+        resolve();
+        runFrom(target !== undefined ? target : state.current.scriptIndex+1);
+      });
+      dom.choiceList.appendChild(btn);
+    });
+    dom.choiceLayer.classList.add("is-open");
+  });
+}
+
+function anyPanelOpen(){
+  return dom.overlaySettings.classList.contains("is-open")
+    || dom.overlayLog.classList.contains("is-open")
+    || dom.overlayStats.classList.contains("is-open")
+    || dom.overlaySaveload.classList.contains("is-open");
+}
+
+/* ============================================================
+   ====================  SAVE / LOAD  ============================
+   ============================================================
+   Saves a lightweight snapshot: script index + flags + bg/bgm key
+   + which characters are shown with which expression/pos. Good
+   enough to resume a session; does not screenshot the frame.
+*/
+function getSaveSnapshot(){
+  const sprites = {};
+  Object.entries(state.current.sprites).forEach(([name,e])=>{
+    if(e.wrapEl.dataset.shown === "1"){
+      sprites[name] = { expression:e.expression, pos:e.pos };
+    }
+  });
+  return {
+    ts: Date.now(),
+    scriptIndex: state.current.scriptIndex,
+    bgKey: state.current.bgKey,
+    bgmKey: Audio_.currentBgmKey,
+    ambianceKey: Audio_.currentAmbianceKey,
+    weatherKey: state.current.weatherKey,
+    weatherIntensity: state.current.weatherIntensity,
+    flags: { ...state.flags },
+    sprites,
+    lastLine: state.log.length ? state.log[state.log.length-1] : null
+  };
+}
+
+function writeSave(slot){
+  const snap = getSaveSnapshot();
+  try{
+    localStorage.setItem(STORAGE_KEYS.save+slot, JSON.stringify(snap));
+    return true;
+  }catch(e){ console.warn("save failed", e); return false; }
+}
+
+function readSave(slot){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEYS.save+slot);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+
+function applySnapshot(snap){
+  // clear current sprites
+  Object.keys(state.current.sprites).forEach(name=>{
+    state.current.sprites[name].wrapEl.remove();
+  });
+  state.current.sprites = {};
+  state.flags = { ...snap.flags };
+
+  if(snap.bgKey) setBackground(snap.bgKey);
+  if(snap.bgmKey) Audio_.playBgm(snap.bgmKey, 0);
+  if(snap.ambianceKey) Audio_.playAmbiance(snap.ambianceKey, 0);
+  state.current.weatherKey = snap.weatherKey || null;
+  state.current.weatherIntensity = snap.weatherIntensity ?? 1;
+  Weather_.set(snap.weatherKey || null, { intensity: snap.weatherIntensity, fadeMs: 0 });
+
+  Object.entries(snap.sprites||{}).forEach(([name, info])=>{
+    showSprite(name, { expression: info.expression, pos: info.pos, transition:"instant", motion:"idle" });
+  });
+
+  closeAllPanels();
+  runFrom(snap.scriptIndex);
+}
+
+function renderSaveLoadPanel(mode){
+  dom.saveloadTitle.textContent = mode === "save" ? "Save" : "Load";
+  dom.saveloadList.innerHTML = "";
+  for(let slot=1; slot<=CONFIG.SAVE_SLOT_COUNT; slot++){
+    const snap = readSave(slot);
+    const row = document.createElement("div");
+    row.className = "setting-row";
+
+    const left = document.createElement("div");
+    const label = document.createElement("div");
+    label.className = "setting-label";
+    label.textContent = "Slot "+slot;
+    const sub = document.createElement("div");
+    sub.className = "setting-sub";
+    sub.textContent = snap
+      ? new Date(snap.ts).toLocaleString()+(snap.lastLine ? " — "+truncate(snap.lastLine.text,40) : "")
+      : "Empty";
+    left.appendChild(label); left.appendChild(sub);
+
+    const btn = document.createElement("button");
+    btn.className = "ui-btn";
+    btn.textContent = mode === "save" ? "Save" : (snap ? "Load" : "—");
+    if(mode === "load" && !snap) btn.style.opacity = "0.3";
+    btn.addEventListener("click", ()=>{
+      if(mode === "save"){
+        writeSave(slot);
+        renderSaveLoadPanel("save");
+      } else if(snap){
+        applySnapshot(snap);
+      }
+    });
+
+    row.appendChild(left);
+    row.appendChild(btn);
+    dom.saveloadList.appendChild(row);
+  }
+}
+
+function truncate(s,n){ return s.length>n ? s.slice(0,n)+"…" : s; }
+
+/* ============================================================
+   ====================  LOG PANEL  ==============================
+   ============================================================ */
+function renderLogPanel(){
+  dom.logList.innerHTML = "";
+  if(!state.log.length){
+    const empty = document.createElement("div");
+    empty.id = "log-empty";
+    empty.textContent = "No lines yet.";
+    dom.logList.appendChild(empty);
+    return;
+  }
+  state.log.slice().reverse().forEach(entry=>{
+    const div = document.createElement("div");
+    div.className = "log-entry";
+    if(entry.name){
+      const nameDiv = document.createElement("div");
+      nameDiv.className = "log-name";
+      nameDiv.textContent = entry.name;
+      div.appendChild(nameDiv);
+    }
+    const textDiv = document.createElement("div");
+    textDiv.className = "log-text";
+    textDiv.textContent = entry.text;
+    div.appendChild(textDiv);
+    dom.logList.appendChild(div);
+  });
+}
+
+/** Renders one block per CHARACTERS entry, one bar per STAT_KEYS,
+ *  reading live values via getStats() (creates the entry with
+ *  STAT_DEFAULTS on first read, so a character who's never had a
+ *  stat touched still shows up at 0 rather than being omitted). */
+function renderStatsPanel(){
+  dom.statsList.innerHTML = "";
+  const personIds = Object.keys(CHARACTERS);
+  if(!personIds.length){
+    const empty = document.createElement("div");
+    empty.id = "stats-empty";
+    empty.textContent = "No characters configured.";
+    dom.statsList.appendChild(empty);
+    return;
+  }
+  personIds.forEach(personId=>{
+    const info = CHARACTERS[personId];
+    const stats = getStats(personId);
+
+    const block = document.createElement("div");
+    block.className = "stat-char-block";
+
+    const nameDiv = document.createElement("div");
+    nameDiv.className = "stat-char-name";
+    nameDiv.textContent = info.name || personId;
+    block.appendChild(nameDiv);
+
+    STAT_KEYS.forEach(statKey=>{
+      const value = clampStat(stats[statKey] ?? 0);
+
+      const row = document.createElement("div");
+      row.className = "stat-row";
+
+      const label = document.createElement("div");
+      label.className = "stat-row-label";
+      label.textContent = statKey;
+      row.appendChild(label);
+
+      const track = document.createElement("div");
+      track.className = "stat-row-track";
+      const fill = document.createElement("div");
+      fill.className = "stat-row-fill" + (statKey === "jealousy" ? " is-jealousy" : "");
+      fill.style.width = ((value/STAT_MAX)*100) + "%";
+      track.appendChild(fill);
+      row.appendChild(track);
+
+      const valueSpan = document.createElement("div");
+      const isJealousy = statKey === "jealousy";
+      if(isJealousy){
+        const disp = jealousyDisplayFor(value);
+        valueSpan.className = "stat-row-value is-text " + disp.cls;
+        valueSpan.textContent = disp.label;
+      } else {
+        valueSpan.className = "stat-row-value";
+        valueSpan.textContent = Math.round(value);
+      }
+      row.appendChild(valueSpan);
+
+      block.appendChild(row);
+    });
+
+    dom.statsList.appendChild(block);
+  });
+}
+
+/* ============================================================
+   ====================  PANEL OPEN/CLOSE  =======================
+   ============================================================ */
+function openPanel(overlayEl){
+  closeAllPanels();
+  overlayEl.classList.add("is-open");
+}
+function closeAllPanels(){
+  [dom.overlaySettings, dom.overlayLog, dom.overlayStats, dom.overlaySaveload].forEach(o=>o.classList.remove("is-open"));
+}
+
+document.querySelectorAll("[data-close]").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.getElementById(btn.dataset.close).classList.remove("is-open");
+  });
+});
+[dom.overlaySettings, dom.overlayLog, dom.overlayStats, dom.overlaySaveload].forEach(overlay=>{
+  overlay.addEventListener("click", (e)=>{
+    if(e.target === overlay) overlay.classList.remove("is-open");
+  });
+});
+
+/* ============================================================
+   ====================  SETTINGS WIRING  ========================
+   ============================================================
+   Each control: read initial value from state.settings, write
+   back on input, and apply any live visual/audio effect.
+*/
+function applyCssVarsFromSettings(){
+  document.documentElement.style.setProperty("--vn-text-size", state.settings.textSize+"px");
+  document.documentElement.style.setProperty("--furigana-display", state.settings.furigana ? "inline" : "none");
+  dom.textbox.style.background = `rgba(11,11,14,${(state.settings.textboxOpacity/100*0.86).toFixed(2)})`;
+}
+
+function bindSlider(id, settingKey, valId, onChange){
+  const el = $(id);
+  const valEl = $(valId);
+  el.value = state.settings[settingKey];
+  valEl.textContent = state.settings[settingKey];
+  el.addEventListener("input", ()=>{
+    state.settings[settingKey] = Number(el.value);
+    valEl.textContent = el.value;
+    saveSettings();
+    if(onChange) onChange();
+  });
+}
+
+function bindToggle(id, settingKey, onChange){
+  const el = $(id);
+  el.classList.toggle("is-on", !!state.settings[settingKey]);
+  el.addEventListener("click", ()=>{
+    state.settings[settingKey] = !state.settings[settingKey];
+    el.classList.toggle("is-on", state.settings[settingKey]);
+    saveSettings();
+    if(onChange) onChange();
+  });
+}
+
+function initSettingsUI(){
+  bindToggle("toggle-furigana", "furigana", applyCssVarsFromSettings);
+  bindSlider("slider-textspeed", "textSpeed", "val-textspeed");
+  bindSlider("slider-autospeed", "autoDelay", "val-autospeed");
+  bindSlider("slider-vol-master", "volMaster", "val-vol-master", ()=>Audio_._applyVolumes());
+  bindSlider("slider-vol-bgm", "volBgm", "val-vol-bgm", ()=>Audio_._applyVolumes());
+  bindSlider("slider-vol-sfx", "volSfx", "val-vol-sfx", ()=>Audio_._applyVolumes());
+  bindSlider("slider-vol-ambiance", "volAmbiance", "val-vol-ambiance", ()=>Audio_._applyVolumes());
+  bindSlider("slider-vol-voice", "volVoice", "val-vol-voice", ()=>Audio_._applyVolumes());
+  bindSlider("slider-textbox-opacity", "textboxOpacity", "val-textbox-opacity", applyCssVarsFromSettings);
+  bindSlider("slider-textsize", "textSize", "val-textsize", applyCssVarsFromSettings);
+  bindToggle("toggle-screenshake", "screenShake");
+  bindToggle("toggle-textfx", "textFx");
+  applyCssVarsFromSettings();
+}
+
+/* ============================================================
+   ====================  TOP BAR + INPUT BINDINGS  ===============
+   ============================================================ */
+function initTopBar(){
+  dom.btnAuto.addEventListener("click", ()=>{
+    state.isAuto = !state.isAuto;
+    dom.btnAuto.classList.toggle("is-on", state.isAuto);
+    if(state.isAuto && !state.isTyping && !dom.choiceLayer.classList.contains("is-open")){
+      advance();
+    }
+  });
+
+  let skipInterval = null;
+  function startSkip(){
+    if(state.isSkipping) return;
+    state.isSkipping = true;
+    dom.btnSkip.classList.add("is-on");
+    if(state.isTyping) skipTypingToEnd();
+    skipInterval = setInterval(()=>{
+      if(!state.isSkipping){ clearInterval(skipInterval); return; }
+      if(!state.isTyping && !dom.choiceLayer.classList.contains("is-open") && !anyPanelOpen()){
+        advance();
+      }
+    }, 70);
+  }
+  function stopSkip(){
+    state.isSkipping = false;
+    dom.btnSkip.classList.remove("is-on");
+    clearInterval(skipInterval);
+  }
+  dom.btnSkip.addEventListener("mousedown", startSkip);
+  dom.btnSkip.addEventListener("touchstart", (e)=>{ e.preventDefault(); startSkip(); });
+  window.addEventListener("mouseup", stopSkip);
+  window.addEventListener("touchend", stopSkip);
+
+  dom.btnLog.addEventListener("click", ()=>{ renderLogPanel(); openPanel(dom.overlayLog); });
+  dom.btnStats.addEventListener("click", ()=>{ renderStatsPanel(); openPanel(dom.overlayStats); });
+  dom.btnSave.addEventListener("click", ()=>{ renderSaveLoadPanel("save"); openPanel(dom.overlaySaveload); });
+  dom.btnLoad.addEventListener("click", ()=>{ renderSaveLoadPanel("load"); openPanel(dom.overlaySaveload); });
+  dom.btnSettings.addEventListener("click", ()=>{ openPanel(dom.overlaySettings); });
+}
+
+function initAdvanceInput(){
+  dom.advanceHitbox.addEventListener("click", ()=>{
+    Audio_.unlock();
+    if(state.isAuto){ state.isAuto = false; dom.btnAuto.classList.remove("is-on"); }
+    advance();
+  });
+  dom.textboxWrap.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    Audio_.unlock();
+    if(state.isAuto){ state.isAuto = false; dom.btnAuto.classList.remove("is-on"); }
+    advance();
+  });
+  window.addEventListener("keydown", (e)=>{
+    Audio_.unlock();
+    if(anyPanelOpen()){
+      if(e.code === "Escape") closeAllPanels();
+      return;
+    }
+    if(e.code === "Space" || e.code === "Enter"){
+      e.preventDefault();
+      advance();
+    } else if(e.code === "Escape"){
+      openPanel(dom.overlaySettings);
+    } else if(e.code === "KeyL"){
+      renderLogPanel(); openPanel(dom.overlayLog);
+    } else if(e.code === "KeyT"){
+      renderStatsPanel(); openPanel(dom.overlayStats);
+    }
+  });
+}
+
+/* ============================================================
+   ====================  DEMO SCRIPT  ============================
+   ============================================================
+   A short showcase script exercising the engine's systems:
+   backgrounds, bgm, sfx/transitions, looping ambiance, scene
+   weather (rain), one-shot environment foley, sprite
+   show/hide/expression/motion, text effects (color tags, shake,
+   pause), a branching choice, and flag-based variation — using
+   the real Aiko/Miki/Ichiko art and audio now wired into
+   ASSET_MANIFEST. Replace SCRIPT with your own story; this is
+   just a wiring sanity-check.
+*/
+function loadDemoScript(){
+  SCRIPT = [
+    { type:"bg", key:"classroom_day" },
+    { type:"bgm", key:"relax" },
+    { type:"ambiance", key:"wind" },
+
+    { type:"show", character:"aiko_casual", expression:"neutral", pos:"left", transition:"slide", motion:"idle" },
+    { type:"say", character:"aiko_casual", name:"Aiko", text:"Hey — {gold}did you see{/gold} the new transfer student yet?" },
+
+    { type:"show", character:"miki_casual", expression:"neutral", pos:"right", transition:"slide", motion:"idle" },
+    { type:"environment", key:"paper_sort" },
+    { type:"say", character:"miki_casual", name:"Miki", text:"{dim}(Here we go again...){/dim} No, and I have a feeling I'm about to." },
+
+    { type:"expression", character:"aiko_casual", expression:"happy" },
+    { type:"motion", character:"aiko_casual", motion:"jump" },
+    { type:"say", character:"aiko_casual", name:"Aiko", text:"{b}Apparently{/b} she's from Kyoto! {pause=300}Isn't that exciting?!" },
+
+    { type:"expression", character:"miki_casual", expression:"sad" },
+    { type:"say", character:"miki_casual", name:"Miki", text:"{i}Every{/i} new student is from somewhere, Aiko." },
+
+    { type:"show", character:"ichiko_casual", expression:"shout", pos:"center", transition:"fade", motion:"idle" },
+    { type:"motion", character:"ichiko_casual", motion:"shake" },
+    { type:"sfx", key:"transition_4" },
+    { type:"say", character:"ichiko_casual", name:"Ichiko", text:"{shake}{red}Did somebody say transfer student?!{/red}{/shake}" },
+
+    { type:"expression", character:"aiko_casual", expression:"happy_blush" },
+    { type:"say", character:"aiko_casual", name:"Aiko", text:"{green}See{/green} — even Ichiko's curious. Want to go find her at lunch?" },
+
+    { type:"choice", options:[
+      { label:"\"Sure, let's go.\"", goto:"path_curious" },
+      { label:"\"Pass — I've got homework.\"", goto:"path_pass" }
+    ]},
+
+    { type:"label", id:"path_curious" },
+    { type:"setFlag", key:"mikiCurious", value:true },
+    { type:"stat", character:"aiko", stat:"affection", delta:5 },
+    { type:"stat", character:"miki", stat:"trust", delta:3 },
+    { type:"expression", character:"miki_casual", expression:"neutral" },
+    { type:"say", character:"miki_casual", name:"Miki", text:"...{pause=200}Alright, alright. Lunch it is." },
+    { type:"jump", goto:"path_join" },
+
+    { type:"label", id:"path_pass" },
+    { type:"setFlag", key:"mikiCurious", value:false },
+    { type:"stat", character:"miki", stat:"affection", delta:-2 },
+    { type:"say", character:"miki_casual", name:"Miki", text:"Homework? You? {blue}{i}Suspicious{/i}{/blue} — but okay, have fun." },
+    { type:"hide", character:"miki_casual", transition:"slide" },
+    { type:"jump", goto:"path_solo" },
+
+    { type:"label", id:"path_join" },
+    { type:"bg", key:"cafeteria_day" },
+    { type:"bgm", key:"shenanigans" },
+    { type:"say", character:null, name:"", text:"{dim}— Lunchtime, the cafeteria —{/dim}" },
+    { type:"say", character:"aiko_casual", name:"Aiko", text:"See? I told you it'd be interesting." },
+    { type:"jump", goto:"path_end" },
+
+    { type:"label", id:"path_solo" },
+    { type:"bg", key:"cafeteria_day" },
+    { type:"bgm", key:"shenanigans" },
+    { type:"say", character:null, name:"", text:"{dim}— Lunchtime, the cafeteria —{/dim}" },
+    { type:"say", character:"aiko_casual", name:"Aiko", text:"Guess it's just us, then. {pause=300}Her loss." },
+
+    { type:"bg", key:"classroom_day" },
+    { type:"bgm", key:null },
+    { type:"weather", key:"rain", intensity:1, fadeMs:1200 },
+    { type:"ambiance", key:"rain_leaves" },
+    { type:"stat", character:"miki", stat:"jealousy", delta:18 },
+    { type:"say", character:null, name:"", text:"{dim}— After school, rain against the window —{/dim}" },
+    { type:"show", character:"miki_casual", expression:"sad", pos:"center", transition:"fade", motion:"idle" },
+    { type:"say", character:"miki_casual", name:"Miki", text:"{dim}(She went without me again...){/dim}" },
+    { type:"weather", key:null, fadeMs:1000 },
+    { type:"ambiance", key:null },
+
+    { type:"label", id:"path_end" },
+    { type:"bgm", key:null },
+    { type:"end" }
+  ];
+  buildLabelIndex();
+}
+
+/* ============================================================
+   ====================  ASSET PRELOAD  ==========================
+   ============================================================
+   In real-asset mode, walks the manifest and warms the browser
+   cache so the first appearance of each sprite/bg isn't janky.
+   In emoji-placeholder mode this resolves instantly.
+*/
+/* ============================================================
+   ====================  ASSET PRELOAD  ==========================
+   ============================================================
+   Boot only waits on the assets the CURRENT SCRIPT actually
+   references (every bg key + every character/expression pair
+   used in a "show"/"expression" step) — not the entire manifest.
+   That keeps the loading screen fast regardless of how many
+   outfits/characters/backgrounds exist in ASSET_MANIFEST overall.
+
+   Once the story-critical assets are ready and the game has
+   started, the rest of the manifest is warmed in the background
+   (low priority, never blocks anything) so later scenes/branches
+   still feel instant without holding up first paint.
+*/
+function collectScriptAssetUrls(script){
+  const urls = new Set();
+  script.forEach(step=>{
+    if(step.type === "bg" && step.key){
+      const r = resolveBg(step.key);
+      if(r && r.type === "url") urls.add(r.value);
+    }
+    if((step.type === "show" || step.type === "expression") && step.character){
+      const expr = step.expression || "neutral";
+      const r = resolveSprite(step.character, expr);
+      if(r && r.type === "url") urls.add(r.value);
+      // also warm that character's default "neutral" pose, since show()
+      // falls back to it whenever no expression is specified later
+      const rn = resolveSprite(step.character, "neutral");
+      if(rn && rn.type === "url") urls.add(rn.value);
+    }
+  });
+  return [...urls];
+}
+
+function collectAllManifestUrls(){
+  const urls = new Set();
+  Object.keys(ASSET_MANIFEST.backgrounds).forEach(k=>{
+    const r = resolveBg(k); if(r && r.type==="url") urls.add(r.value);
+  });
+  Object.keys(ASSET_MANIFEST.sprites).forEach(ch=>{
+    Object.keys(ASSET_MANIFEST.sprites[ch]).forEach(expr=>{
+      const r = resolveSprite(ch, expr); if(r && r.type==="url") urls.add(r.value);
+    });
+  });
+  return [...urls];
+}
+
+function loadImages(urls){
+  return new Promise(resolve=>{
+    if(!urls.length){ resolve(); return; }
+    let loaded = 0;
+    const done = ()=>{ loaded++; if(loaded>=urls.length) resolve(); };
+    urls.forEach(u=>{
+      const img = new Image();
+      img.onload = done; img.onerror = done;
+      img.src = u;
+    });
+  });
+}
+
+/** Blocks boot — only the assets SCRIPT actually needs up front. */
+function preloadAssets(){
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return Promise.resolve();
+  return loadImages(collectScriptAssetUrls(SCRIPT));
+}
+
+/** Never blocks — tops up the browser cache with everything else
+ *  in ASSET_MANIFEST so later scenes/branches/outfit changes don't
+ *  have to wait on a network fetch the first time they're shown. */
+function warmRemainingAssetsInBackground(){
+  if(CONFIG.USE_EMOJI_PLACEHOLDERS) return;
+  const already = new Set(collectScriptAssetUrls(SCRIPT));
+  const rest = collectAllManifestUrls().filter(u=>!already.has(u));
+  if(!rest.length) return;
+  // stagger slightly so it never competes with the first few user
+  // interactions / in-scene asset loads for bandwidth
+  let i = 0;
+  const BATCH = 6;
+  function nextBatch(){
+    const batch = rest.slice(i, i+BATCH);
+    i += BATCH;
+    batch.forEach(u=>{ const img = new Image(); img.src = u; });
+    if(i < rest.length) setTimeout(nextBatch, 250);
+  }
+  setTimeout(nextBatch, 800); // let the opening scene settle first
+}
+
+/* ============================================================
+   ====================  BOOT  ====================================
+   ============================================================ */
+async function boot(){
+  loadSettings();
+  Audio_.init();
+  initSettingsUI();
+  initTopBar();
+  initAdvanceInput();
+  loadDemoScript();
+
+  await preloadAssets();
+
+  dom.textboxWrap.classList.add("is-visible");
+
+  dom.bootScreen.classList.add("is-hidden");
+  setTimeout(()=>{ dom.bootScreen.style.display = "none"; }, 450);
+
+  runFrom(0);
+
+  warmRemainingAssetsInBackground();
+}
+
+boot();
+
+})();
+</script>
+
+
+
+
+
+
+
+
+</body>
+</html>
